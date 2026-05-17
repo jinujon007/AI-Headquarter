@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(browse)",
+      "Skill(browse:*)",
+      "Bash('/c/Users/Jinu Joshi/.claude/skills/gstack/browse/dist/browse' goto https://github.com/carlosazaustre/tenacitOS)",
+      "Bash('/c/Users/Jinu Joshi/.claude/skills/gstack/browse/dist/browse' text)"
+    ]
+  }
+}
