@@ -1,0 +1,41 @@
+# Auto-labels PRs based on changed files
+
+'area: server':
+  - changed-files:
+    - any-glob-to-any-file: 'apps/server/**'
+
+'area: dashboard':
+  - changed-files:
+    - any-glob-to-any-file: 'apps/dashboard/**'
+
+'area: adapters':
+  - changed-files:
+    - any-glob-to-any-file: 'packages/adapters/**'
+
+'area: core':
+  - changed-files:
+    - any-glob-to-any-file: 'packages/core/**'
+
+'area: types':
+  - changed-files:
+    - any-glob-to-any-file: 'packages/types/**'
+
+'area: docs':
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'docs/**'
+      - '*.md'
+      - '.github/**/*.md'
+
+'area: ci':
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/workflows/**'
+      - '.github/dependabot.yml'
+
+'area: docker':
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/Dockerfile'
+      - 'docker-compose.yml'
+      - '.dockerignore'

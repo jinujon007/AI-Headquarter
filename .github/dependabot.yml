@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Root and all workspaces (npm workspaces share one lock file)
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '09:00'
+    groups:
+      # Batch minor+patch updates to reduce PR noise
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # Pin Colyseus — major versions are breaking
+      - dependency-name: colyseus
+        update-types: [version-update:semver-major]
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
+      - github-actions

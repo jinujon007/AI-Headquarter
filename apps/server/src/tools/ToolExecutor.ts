@@ -1,4 +1,4 @@
-import { exec } from 'child_process';
+import vm from 'vm';
 import { tavily, type TavilyClient, type TavilySearchResponse } from '@tavily/core';
 
 export interface ToolResult {
@@ -23,7 +23,7 @@ export class ToolExecutor {
     async execute(toolName: string, params: any): Promise<ToolResult> {
         switch (toolName) {
             case 'code_execute':
-                return this.executeCode(params.code, params.language || 'javascript');
+                return Promise.resolve(this.executeCode(params.code, params.language || 'javascript'));
             case 'web_search':
                 return this.webSearch(params.query);
         case 'write_note':
@@ -45,36 +45,33 @@ export class ToolExecutor {
         }
     }
 
-    private executeCode(code: string, language: string): Promise<ToolResult> {
-        return new Promise((resolve) => {
-            // Sandbox: only allow JS/TS, with timeout
-            if (language !== 'javascript' && language !== 'js') {
-                resolve({ success: false, output: '', error: `Only JavaScript is supported for sandboxed execution.` });
-                return;
-            }
+    private executeCode(code: string, language: string): ToolResult {
+        if (language !== 'javascript' && language !== 'js') {
+            return { success: false, output: '', error: 'Only JavaScript is supported for sandboxed execution.' };
+        }
 
-            // Wrap in a timeout to prevent infinite loops
-            const wrappedCode = `
-                const __timeout = setTimeout(() => { process.exit(1); }, 5000);
-                try {
-                    const result = (function() { ${code} })();
-                    if (result !== undefined) console.log(JSON.stringify(result));
-                    clearTimeout(__timeout);
-                } catch(e) {
-                    console.error(e.message);
-                    clearTimeout(__timeout);
-                    process.exit(1);
-                }
-            `;
-
-            exec(`node -e "${wrappedCode.replace(/"/g, '\\"')}"`, { timeout: 6000 }, (error, stdout, stderr) => {
-                if (error) {
-                    resolve({ success: false, output: stderr || error.message, error: error.message });
-                } else {
-                    resolve({ success: true, output: stdout.trim() });
-                }
-            });
+        const output: string[] = [];
+        const sandbox = vm.createContext({
+            console: {
+                log:   (...args: unknown[]) => output.push(args.map(String).join(' ')),
+                error: (...args: unknown[]) => output.push('[err] ' + args.map(String).join(' ')),
+                warn:  (...args: unknown[]) => output.push('[warn] ' + args.map(String).join(' ')),
+            },
+            Math, JSON, Date, Array, Object, String, Number, Boolean, RegExp,
+            parseInt, parseFloat, isNaN, isFinite,
         });
+
+        try {
+            const result = vm.runInContext(code, sandbox, { timeout: 5000, filename: 'sandbox.js' });
+            if (result !== undefined) output.push(JSON.stringify(result));
+            return { success: true, output: output.join('\n') || 'Executed (no output).' };
+        } catch (e: unknown) {
+            const err = e as NodeJS.ErrnoException;
+            if (err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+                return { success: false, output: output.join('\n'), error: 'Execution timed out (5s limit).' };
+            }
+            return { success: false, output: output.join('\n'), error: (e as Error).message };
+        }
     }
 
     private async webSearch(query: string): Promise<ToolResult> {
@@ -146,17 +143,20 @@ export class ToolExecutor {
         }
     }
 
-    private async readFile(path: string): Promise<ToolResult> {
-        // Sandboxed: only allow reading from a safe directory
+    private async readFile(filePath: string): Promise<ToolResult> {
+        const pathModule = await import('path');
         const { readFile } = await import('fs/promises');
         try {
-            if (path.includes('..') || path.startsWith('/')) {
-                return { success: false, output: '', error: 'Path traversal not allowed.' };
+            const allowedRoot = pathModule.resolve(process.cwd(), 'output');
+            const resolved = pathModule.resolve(process.cwd(), filePath);
+            // Enforce that resolved path is strictly inside output/
+            if (!resolved.startsWith(allowedRoot + pathModule.sep) && resolved !== allowedRoot) {
+                return { success: false, output: '', error: 'Access denied: path must be within output/' };
             }
-            const content = await readFile(path, 'utf-8');
-            return { success: true, output: content.slice(0, 500) };
-        } catch (e: any) {
-            return { success: false, output: '', error: e.message };
+            const content = await readFile(resolved, 'utf-8');
+            return { success: true, output: content.slice(0, 2000) };
+        } catch (e: unknown) {
+            return { success: false, output: '', error: (e as Error).message };
         }
     }
 }

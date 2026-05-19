@@ -7,24 +7,23 @@ on:
     branches: [main, master]
 
 jobs:
-  build:
+  ci:
+    name: Build, Lint & Test
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [22.x]
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js ${{ matrix.node-version }}
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: '22'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
+      # ── Packages ──────────────────────────────────────────────────────────
       - name: Build packages/types
         run: npm run build --workspace=packages/types
 
@@ -34,17 +33,30 @@ jobs:
       - name: Build packages/adapters
         run: npm run build --workspace=packages/adapters
 
+      # ── Server ────────────────────────────────────────────────────────────
       - name: Typecheck server
-        run: npm run typecheck --workspace=apps/server || npx tsc --noEmit --workspace=apps/server
+        run: npx tsc --noEmit --project apps/server/tsconfig.json
 
       - name: Build server
         run: npm run build --workspace=apps/server
 
+      # ── Dashboard ─────────────────────────────────────────────────────────
       - name: Typecheck dashboard
-        run: npm run typecheck --workspace=apps/dashboard || npx tsc --noEmit --project apps/dashboard/tsconfig.json
+        run: npx tsc --noEmit --project apps/dashboard/tsconfig.json
 
       - name: Build dashboard
         run: npm run build --workspace=apps/dashboard
         env:
           ADMIN_PASSWORD: ci-placeholder
-          AUTH_SECRET: ci-placeholder-32-char-secret-xx
+          AUTH_SECRET: ci-placeholder-32-char-secret-xxxx
+
+      # ── Tests ─────────────────────────────────────────────────────────────
+      - name: Run tests
+        run: npm test --workspaces --if-present
+        env:
+          CI: true
+
+      # ── Security audit ────────────────────────────────────────────────────
+      - name: Audit dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true  # warn but don't fail — Dependabot handles fixes
