@@ -1,0 +1,26 @@
+node_modules/
+.next/
+dist/
+*.env.local
+.env
+temp-agent-office/
+temp-tenacitOS/
+output/
+.gstack/
+.kilo/
+.claude/
+BRAIN_BRIEF.md
+PHASE2_SPECS.md
+
+# Build artifacts
+*.tsbuildinfo
+
+# SQLite runtime files
+*.db
+*.db-shm
+*.db-wal
+
+# Dashboard runtime data (except examples)
+apps/dashboard/data/*.db
+apps/dashboard/data/*.db-shm
+apps/dashboard/data/*.db-wal

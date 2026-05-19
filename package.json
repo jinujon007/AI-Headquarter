@@ -1,0 +1,21 @@
+{
+  "name": "ai-headquarters",
+  "version": "0.0.1",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=apps/dashboard\" \"npm run dev --workspace=apps/server\"",
+    "build": "npm run build --workspaces",
+    "start": "concurrently \"npm run start --workspace=apps/dashboard\" \"npm run start --workspace=apps/server\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "react-hook-form": "^7.76.0"
+  }
+}

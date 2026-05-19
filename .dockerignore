@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+.env
+.env.local
+**/.env.local
+output/
+data/
+.git
+.gitignore
+**/*.log
+dist/
+**/dist/
+.next/
+**/.next/
+*.md
+!README.md

@@ -1,22 +1,7 @@
-# CHANGELOG.md — AI_Headquarters
+## T-062 — Infrastructure: README launch polish + CONTRIBUTING.md [DONE] [Brain: Kilo Code] [2026-05-19]
 
-File-level change log. Every brain logs here after every task. Most recent at top.
+Files changed:
+- EDITED: README.md (added launch polish header, Deploy section, Contributing link)
+- CREATED: CONTRIBUTING.md (detailed contributing guide)
 
-Format:
-```
-## T-XXX — [Title] [STATUS] [Brain: NAME] [YYYY-MM-DD]
-Files changed: ...
-Notes: ...
-```
-
----
-
-## Project initialized [Brain: Claude Code] [2026-05-18]
-
-Files created:
-- CREATED: CLAUDE.md (project context)
-- CREATED: AGENTS.md (multi-brain protocol)
-- CREATED: TASK_QUEUE.md (task list, Phase 0 ready)
-- CREATED: CHANGELOG.md (this file)
-
-Notes: Foundation files only. No source code yet. Awaiting Jinu to complete manual setup steps before Kilo Code begins.
+Notes: Enhanced README with centered launch badge, improved project description, Deploy in One Click section with Railway button, and linked CONTRIBUTING.md. Created comprehensive CONTRIBUTING.md with dev setup guides for adding agents, tools, and LLM adapters. All Phase 8 infrastructure tasks are now complete.

@@ -1,8 +1,0 @@
-{"ts":"2026-05-17T16:10:47.295Z","cmd":"goto","args":"https://github.com/harishkotra/agent-office","origin":"https://github.com/harishkotra/agent-office","durationMs":5139,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T16:10:51.116Z","cmd":"text","args":"","origin":"https://github.com/harishkotra/agent-office","durationMs":18,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T16:10:58.005Z","cmd":"goto","args":"https://github.com/harishkotra/agent-office/blob/main/CHANGELOG.md","origin":"https://github.com/harishkotra/agent-office/blob/main/CHANGELOG.md","durationMs":968,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T16:11:00.682Z","cmd":"text","args":"","origin":"https://github.com/harishkotra/agent-office/blob/main/CHANGELOG.md","durationMs":11,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T16:11:30.563Z","cmd":"goto","args":"https://github.com/harishkotra/agent-office/tree/main/pixel-agents-repo","origin":"https://github.com/harishkotra/agent-office/tree/main/pixel-agents-repo","durationMs":1202,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T16:11:33.272Z","cmd":"text","args":"","origin":"https://github.com/harishkotra/agent-office/tree/main/pixel-agents-repo","durationMs":22,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T18:10:59.869Z","cmd":"goto","args":"https://github.com/carlosazaustre/tenacitOS","origin":"https://github.com/carlosazaustre/tenacitOS","durationMs":5275,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-05-17T18:11:07.069Z","cmd":"text","args":"","origin":"https://github.com/carlosazaustre/tenacitOS","durationMs":27,"status":"ok","hasCookies":false,"mode":"launched"}

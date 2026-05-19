@@ -1,0 +1,21 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "outDir": "./dist",
+        "rootDir": "./src",
+        "experimentalDecorators": true,
+        "strictPropertyInitialization": false,
+        "composite": true
+    },
+    "references": [
+        {
+            "path": "../../packages/core"
+        },
+        {
+            "path": "../../packages/adapters"
+        }
+    ],
+    "include": [
+        "src/**/*"
+    ]
+}
