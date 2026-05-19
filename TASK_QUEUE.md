@@ -27,7 +27,7 @@ Single source of truth for what to build. Read BRAIN_BRIEF.md before touching an
 | T-011 | Server: add CEO message handler + PA response stub | Claude Code | DONE | 1 | T-010 |
 | T-012 | Server: emit AIHQ WebSocket events, strip old events | Claude Code | DONE | 1 | T-010 |
 | T-013 | Server: add GET /api/costs endpoint | Claude Code | DONE | 1 | T-009 |
-| T-014 | Dashboard: fix lib/paths.ts — set SERVER_URL + API endpoints | Claude Code | DONE | 1 | — |
+| T-014 | Dashboard: fix lib/paths.ts — set SERVER_URL + API endpoints | Kilo Code | DONE | 1 | — |
 | T-015 | Dashboard: replace /api/agents route — proxy to server | Claude Code | DONE | 1 | T-009, T-014 |
 | T-016 | Dashboard: replace /api/tasks route — proxy to server | Claude Code | DONE | 1 | T-009 |
 | T-017 | Dashboard: /api/costs — local SQLite (no server proxy needed) | Claude Code | DONE | 1 | T-013, T-014 |
@@ -76,6 +76,19 @@ Single source of truth for what to build. Read BRAIN_BRIEF.md before touching an
 | T-060 | Infrastructure: Dockerfile validation + .dockerignore | Kilo Code | DONE | 8 | T-005 |
 | T-061 | Infrastructure: GitHub Actions CI — typecheck + build matrix | Kilo Code | DONE | 8 | T-060 |
 | T-062 | Infrastructure: README launch polish + CONTRIBUTING.md | Kilo Code | DONE | 8 | T-044 |
+| T-063 | Bug fix: restore `output` endpoint in paths.ts | Claude Code | DONE | 9 | T-043 |
+| T-064 | Verification: TypeScript build across all packages | Kilo Code | READY | 9 | T-062 |
+| T-065 | Verification: remove terminal route + final security sweep | Cline | READY | 9 | T-049 |
+| T-066 | Integration: wire server cost data to dashboard costs page | Kilo Code | READY | 9 | T-054 |
+| T-067 | Launch: demo GIF script + recording checklist | Cline | READY | 9 | T-065 |
+| T-068 | Launch: GitHub repo push checklist + HN/PH draft | Claude Code | READY | 9 | T-067 |
+| T-069 | Server: basic API smoke tests | Kilo Code | READY | 9 | T-064 |
+| T-070 | Server: fix dev script — add watch mode | Kilo Code | READY | 9 | T-064 |
+| T-071 | Infrastructure: Docker Compose healthchecks + startup order | Kilo Code | READY | 9 | T-053 |
+| T-072 | Infrastructure: create .releaserc for semantic-release | Claude Code | READY | 9 | T-068 |
+| T-073 | Cleanup: remove dead code — server db.ts + dashboard /api/office | Cline | READY | 9 | T-065 |
+| T-074 | Security: add rate limiting to /api/ceo/message | Kilo Code | READY | 9 | T-070 |
+| T-075 | Cleanup: remove @react-three/rapier from dashboard deps | Cline | READY | 9 | T-073 |
 
 ---
 
@@ -496,7 +509,7 @@ public async getCosts(): Promise<any[]> {
 ---
 
 ### T-014 — Dashboard: fix lib/paths.ts — set SERVER_URL + API endpoints
-**Brain:** Kilo Code | **Status:** READY | **Phase:** 1 | **Depends On:** —
+**Brain:** Kilo Code | **Status:** DONE | **Phase:** 1 | **Depends On:** —
 
 **Goal:** The current paths.ts has been changed to local filesystem paths (AIHQ_ROOT, AIHQ_OUTPUT_DIR etc). That is WRONG for the dashboard. The dashboard needs HTTP URL config to call the server, not filesystem paths. Replace the entire file.
 
@@ -2727,3 +2740,295 @@ MIT. Attribution required — see README.
 **Files:** EDIT `README.md` | CREATE `CONTRIBUTING.md`
 
 **Escalate to Claude if:** README has sections in T-044 that conflict with the new header — merge carefully, do not drop attribution section.
+
+---
+
+## PHASE 9 — Verification & Launch
+
+---
+
+### T-063 — Bug fix: restore `output` endpoint in paths.ts
+**Brain:** Claude Code | **Status:** DONE | **Phase:** 9 | **Depends On:** T-043
+
+Restored `output: (filePath: string) => \`${SERVER_URL}/api/output?path=${encodeURIComponent(filePath)}\`` to the API export in `apps/dashboard/src/lib/paths.ts`. This was accidentally deleted in the working copy, breaking the output viewer feature (T-043).
+
+---
+
+### T-064 — Verification: TypeScript build across all packages
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-062
+
+**Goal:** Confirm zero TypeScript errors across all workspaces. Every package must build clean.
+
+**Steps:**
+1. From project root, run:
+```bash
+npm run build --workspace=packages/types
+npm run build --workspace=packages/core
+npm run build --workspace=packages/adapters
+npm run build --workspace=apps/server
+npm run build --workspace=apps/dashboard
+```
+2. For each error: fix the error in the relevant file. Do NOT suppress with `// @ts-ignore` — fix the root cause.
+3. Log all files changed in CHANGELOG.md under a new `## [Unreleased]` entry.
+
+**Output:** All 5 workspace builds exit 0.
+
+**Escalate to Claude if:** Build error requires changing an interface in `packages/types` — that's an API contract change.
+
+---
+
+### T-065 — Verification: remove terminal route + final security sweep
+**Brain:** Cline | **Status:** READY | **Phase:** 9 | **Depends On:** T-049
+
+**Goal:** The terminal route at `apps/dashboard/src/app/api/terminal/route.ts` was spec'd to be deleted (v2 feature, security concern). Instead it was "secured" with an allowlist. Claude decision: delete it entirely. Also sweep for any other v2 routes that should be gone.
+
+**Steps:**
+1. Delete `apps/dashboard/src/app/api/terminal/route.ts`.
+2. Search for any UI component that calls `/api/terminal` — if found, remove the call or hide the component behind a v2 feature flag comment.
+3. Search for these routes that should not exist — delete if found:
+   - `/api/files` or `/api/file`
+   - `/api/search`
+   - `/api/memory`
+   - `/api/browse`
+   - `/api/git`
+   - `/api/media`
+4. Run `grep -r "terminal" apps/dashboard/src/` — confirm no dead imports.
+5. Log to CHANGELOG.md.
+
+**Output:** Terminal route deleted. No v2 route stubs remain.
+
+**Escalate to Claude if:** A UI component visibly relies on the terminal and removal would break rendering.
+
+---
+
+### T-066 — Integration: wire server cost data to dashboard costs page
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-054
+
+**Goal:** The dashboard costs page currently reads from a local `usage-tracking.db` via a `collect-usage` script. The server already tracks token usage in its own SQLite DB (T-054). These are two disconnected systems. Wire the dashboard costs page to the server's `/api/costs` endpoint instead.
+
+**Steps:**
+1. Read `apps/dashboard/src/app/api/costs/route.ts` — it currently uses `getDatabase`, `getCostSummary` etc from `@/lib/usage-queries`.
+2. Replace the GET handler to proxy to `API.costs` (from `@/lib/paths`), same pattern as `tasks/route.ts`.
+3. Keep the POST handler (budget update) — it can remain local for now.
+4. The server's `/api/costs` returns an array of cost records. Check the shape from `OfficeRoom.getCosts()` in `apps/server/src/rooms/OfficeRoom.ts` — adapt the dashboard costs page component to match this shape if needed.
+5. Log to CHANGELOG.md.
+
+**Output:** Costs page shows live server token usage, not stale local DB.
+
+**Escalate to Claude if:** The server cost response shape is incompatible with the Costs page UI — that requires a dashboard component change too.
+
+---
+
+### T-067 — Launch: demo GIF script + recording checklist
+**Brain:** Cline | **Status:** READY | **Phase:** 9 | **Depends On:** T-065
+
+**Goal:** Create a step-by-step script for recording the flagship demo GIF (landing page demo workflow under 5 min).
+
+**Steps:**
+1. Create `examples/demo-workflows/recording-script.md` with:
+   - Pre-flight: Ollama running, llama3.2 pulled, server + dashboard both running, browser at localhost:3000
+   - Scene 1: Login, show empty office
+   - Scene 2: CEO types the landing page command
+   - Scene 3: PA acknowledges, agents activate (show 3D avatars changing status)
+   - Scene 4: Board room sequence (if triggered)
+   - Scene 5: Task board populates, agents working
+   - Scene 6: Tasks complete, PA reports back, output files visible
+   - Post-recording: GIF tool recommendations (LICEcap, Kap, ScreenToGif)
+2. Add to `README.md` under a `## Demo` section: embed placeholder for the GIF and link to the recording script.
+
+**Output:** `examples/demo-workflows/recording-script.md` created. README has Demo section.
+
+**Escalate to Claude if:** README Demo section would conflict with existing sections — coordinate placement.
+
+---
+
+### T-068 — Launch: GitHub repo push checklist + HN/PH draft
+**Brain:** Claude Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-067
+
+**Goal:** Prepare everything needed to push to GitHub and submit to Hacker News + Product Hunt.
+
+**Steps:**
+1. Create `docs/launch-checklist.md` with:
+   - Pre-push: T-064 (TypeScript clean), T-065 (terminal deleted), T-066 (costs wired), T-067 (demo GIF recorded and in README)
+   - GitHub setup: create repo `AI-Headquarter` under `jinujon007`, set description, topics: `ai-agents`, `multi-agent`, `ollama`, `nextjs`, `colyseus`, `local-first`, `3d-office`
+   - GitHub: enable Issues, Discussions. Link SECURITY.md. Enable Dependabot alerts.
+   - HN post draft (Show HN format)
+   - Product Hunt submission checklist
+2. Write the HN draft directly in the checklist file.
+
+**Output:** `docs/launch-checklist.md` created.
+
+**Escalate to Claude if:** None — this is documentation only.
+
+---
+
+### T-069 — Server: basic API smoke tests
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-064
+
+**Goal:** The CI runs `npm test` but there are no tests. This badge is currently lying. Add minimal integration tests that prove the server API contract is working.
+
+**Steps:**
+1. Add `jest` + `@types/jest` + `ts-jest` to `apps/server` devDependencies.
+2. Create `apps/server/src/__tests__/api.test.ts`:
+   - Test `GET /health` returns `{ ok: true }`
+   - Test `GET /api/health` returns JSON with `uptime` field
+   - Test `GET /api/agents` returns an array
+   - Test `GET /api/tasks` returns an array
+   - Test `POST /api/ceo/message` with no body returns 400
+   - Test `POST /api/agents/hire` with no body returns 400
+3. Add `jest.config.js` to `apps/server/`.
+4. Confirm `npm test --workspace=apps/server` passes in CI.
+
+**Output:** 6 passing tests. CI test step no longer silent.
+
+**Escalate to Claude if:** Server requires a running Colyseus room to answer `/api/agents` — may need to mock `OfficeRoom.getActiveRoom()`.
+
+---
+
+### T-070 — Server: fix dev script — add watch mode
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-064
+
+**Goal:** `"dev": "tsc -b && node dist/index.js"` builds once and runs compiled output. Code changes require manual restart. This is a broken DX that slows every iteration.
+
+**Steps:**
+1. Add `ts-node-dev` to `apps/server` devDependencies: `"ts-node-dev": "^2.0.0"`.
+2. Update `apps/server/package.json` dev script:
+   ```json
+   "dev": "ts-node-dev --respawn --transpile-only --project tsconfig.json src/index.ts"
+   ```
+3. Verify `npm run dev --workspace=apps/server` starts and restarts on file save.
+4. The `build` and `start` scripts remain unchanged (used in Docker/CI).
+
+**Output:** Server restarts automatically on source change during development.
+
+**Escalate to Claude if:** `ts-node-dev` has issues with the `@colyseus/schema` decorators — some schema decorators don't work with transpile-only mode.
+
+---
+
+### T-071 — Infrastructure: Docker Compose healthchecks + startup order
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-053
+
+**Goal:** `depends_on: server` in docker-compose.yml only waits for container start, not server readiness. Dashboard starts before Colyseus room is initialized. First-time Docker users see a broken state.
+
+**Steps:**
+1. Edit `docker-compose.yml` — add healthcheck to the `server` service:
+   ```yaml
+   healthcheck:
+     test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+     interval: 5s
+     timeout: 3s
+     retries: 10
+     start_period: 15s
+   ```
+2. Update the `dashboard` service `depends_on`:
+   ```yaml
+   depends_on:
+     server:
+       condition: service_healthy
+   ```
+3. Verify `docker compose up` correctly waits for server health before starting dashboard.
+
+**Output:** Docker cold-start no longer shows a broken dashboard.
+
+**Escalate to Claude if:** Curl is not available in the server Docker image (alpine) — use `wget -q -O - http://localhost:3001/health` instead.
+
+---
+
+### T-072 — Infrastructure: create .releaserc for semantic-release
+**Brain:** Claude Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-068
+
+**Goal:** `release.yml` uses semantic-release but there is no `.releaserc` configuration. Without it, semantic-release uses defaults that don't match the monorepo structure. The release workflow will fail or produce incorrect output on first push to main.
+
+**Steps:**
+1. Create `.releaserc` at project root:
+   ```json
+   {
+     "branches": ["main"],
+     "plugins": [
+       "@semantic-release/commit-analyzer",
+       "@semantic-release/release-notes-generator",
+       ["@semantic-release/changelog", { "changelogFile": "CHANGELOG.md" }],
+       ["@semantic-release/git", {
+         "assets": ["CHANGELOG.md", "package.json"],
+         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+       }],
+       "@semantic-release/github"
+     ]
+   }
+   ```
+2. Add missing semantic-release plugins to root `package.json` devDependencies:
+   ```
+   @semantic-release/commit-analyzer
+   @semantic-release/release-notes-generator
+   @semantic-release/github
+   ```
+3. Update `release.yml` extra_plugins list to include these.
+
+**Output:** `release.yml` will correctly analyze commits, update CHANGELOG.md, create a GitHub release, and tag on push to main.
+
+**Escalate to Claude if:** None — this is configuration only.
+
+---
+
+### T-073 — Cleanup: remove dead code — server db.ts + dashboard /api/office
+**Brain:** Cline | **Status:** READY | **Phase:** 9 | **Depends On:** T-065
+
+**Goal:** Two dead code artifacts are creating confusion and maintenance overhead. Remove both.
+
+**Steps:**
+1. Delete `apps/server/src/db.ts` — this is the agent-office original DB schema (offices/agents/memories tables). It is never imported. `MemoryStore.ts` is the real persistence layer. Verify with: `grep -r "from.*db" apps/server/src/ | grep -v node_modules`.
+2. Delete `apps/dashboard/src/app/api/office/route.ts` — this returns hardcoded static agent stubs. It exists from before the real Colyseus WebSocket integration was built. Check if anything calls this route: `grep -r "api/office" apps/dashboard/src/ | grep -v node_modules`. If called by a component, remove or replace that call with the real `/api/agents` route.
+3. Check `apps/dashboard/src/(dashboard)/page.tsx` — the home page calls `/api/activities/stats`. The activities system requires a separate `data/activities.db` that is never populated by normal usage. Add a null/empty state graceful fallback to the home page so it doesn't show broken stats for first-time users.
+4. Log all deletions to CHANGELOG.md.
+
+**Output:** Dead code removed. Dashboard home page doesn't show broken zeros.
+
+**Escalate to Claude if:** `/api/office` is referenced by a component that can't easily be rerouted.
+
+---
+
+### T-074 — Security: add rate limiting to /api/ceo/message
+**Brain:** Kilo Code | **Status:** READY | **Phase:** 9 | **Depends On:** T-070
+
+**Goal:** `/api/ceo/message` has no rate limiting. A client can flood the server with concurrent requests, queueing up Ollama calls (OOM risk) or burning BYOK API credits. Minimum viable protection: reject if a CEO message is already in-flight.
+
+**Steps:**
+1. In `apps/server/src/rooms/OfficeRoom.ts`, add a class-level flag:
+   ```typescript
+   private ceoMessageInFlight = false;
+   ```
+2. In `streamCeoMessage()`, add at the start:
+   ```typescript
+   if (this.ceoMessageInFlight) {
+     emit({ type: 'error', message: 'PA is still processing your last message. Please wait.' });
+     emit({ type: 'end' });
+     return;
+   }
+   this.ceoMessageInFlight = true;
+   ```
+3. In the finally block (ensure this runs even on error):
+   ```typescript
+   this.ceoMessageInFlight = false;
+   ```
+4. In `apps/server/src/index.ts`, add a simple Express rate limiter on the route: `express-rate-limit` — 10 requests per minute per IP.
+
+**Output:** Concurrent CEO messages are rejected gracefully. IP-based rate limiting prevents abuse.
+
+**Escalate to Claude if:** `express-rate-limit` has a version conflict with existing Express setup.
+
+---
+
+### T-075 — Cleanup: remove @react-three/rapier from dashboard deps
+**Brain:** Cline | **Status:** READY | **Phase:** 9 | **Depends On:** T-073
+
+**Goal:** `@react-three/rapier` (physics engine, ~500KB WASM) is in dashboard dependencies but never used in any source file. Remove it to reduce bundle size.
+
+**Steps:**
+1. Verify not used: `grep -r "rapier" apps/dashboard/src/ | grep -v node_modules`
+2. Remove from `apps/dashboard/package.json` dependencies.
+3. Run `npm install` to update lockfile.
+4. Run `npm run build --workspace=apps/dashboard` to confirm build still passes.
+
+**Output:** Dashboard bundle reduced. No functional change.
+
+**Escalate to Claude if:** Build output references rapier after removal (would mean it'

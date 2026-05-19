@@ -8,6 +8,17 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## Program Review + Phase 9 Expansion [Brain: Claude Code] [2026-05-19]
+
+Files changed:
+- MODIFIED: apps/dashboard/src/lib/paths.ts (restored `output` function accidentally deleted from working copy — critical bug fix)
+- MODIFIED: TASK_QUEUE.md (reset T-014 IN-PROGRESS→DONE; added Phase 9 tasks T-063 through T-075)
+- CREATED: PROGRAM_FRAMEWORK.md (execution framework: risk register, critical path, sprint structure, ownership map, launch definition of done)
+
+Notes: Full audit of all 62 completed tasks. 15 gaps identified. 13 new Phase 9 tasks added covering: TypeScript verification, dead code removal, server watch mode, Docker healthchecks, API smoke tests, rate limiting, semantic-release config, demo recording script, and launch checklist.
+
+---
+
 ### Security
 - Replaced `exec()` shell invocation with `vm.runInNewContext()` in `ToolExecutor` — eliminates shell injection vulnerability in code execution tool
 - Fixed `readFile` path traversal — now uses `path.resolve` + strict prefix check to enforce `output/` sandbox
