@@ -11,6 +11,6 @@
         "easystarjs": "^0.4.4"
     },
     "devDependencies": {
-        "@types/easystarjs": "^0.1.29"
+        "@types/easystarjs": "^0.3.4"
     }
 }
