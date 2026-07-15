@@ -13,9 +13,15 @@
         },
         {
             "path": "../../packages/adapters"
+        },
+        {
+            "path": "../../packages/types"
         }
     ],
     "include": [
         "src/**/*"
+    ],
+    "exclude": [
+        "src/**/*.test.ts"
     ]
 }
