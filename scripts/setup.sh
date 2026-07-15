@@ -56,19 +56,19 @@ else
         ok "Ollama is running"
 
         # Check for the default model
-        MODEL="${OLLAMA_MODEL:-llama3.1:8b}"
+        MODEL="${OLLAMA_MODEL:-llama3.2:3b}"
         if ollama list 2>/dev/null | grep -q "$MODEL"; then
             ok "Model '$MODEL' is available"
         else
             echo ""
-            warn "Model '$MODEL' not found. Pulling now (~4.7 GB)..."
+            warn "Model '$MODEL' not found. Pulling now (~2.0 GB)..."
             ollama pull "$MODEL"
             ok "Model '$MODEL' downloaded"
         fi
     else
         warn "Ollama is installed but not running."
         warn "Start it with: ollama serve"
-        warn "Then pull the model: ollama pull ${OLLAMA_MODEL:-llama3.1:8b}"
+        warn "Then pull the model: ollama pull ${OLLAMA_MODEL:-llama3.2:3b}"
     fi
 fi
 
@@ -109,6 +109,32 @@ else
     else
         ok "AUTH_SECRET is set"
     fi
+fi
+
+# ── Dashboard .env.local ──────────────────────────────────────────────────────
+# Next.js reads env from apps/dashboard/.env.local, NOT the root .env.
+echo "Checking dashboard .env.local..."
+if [ ! -f "apps/dashboard/.env.local" ]; then
+    warn "apps/dashboard/.env.local not found. Creating from example..."
+    cp apps/dashboard/.env.local.example apps/dashboard/.env.local
+
+    # Reuse the credentials from root .env so both stay in sync
+    if [ -f ".env" ]; then
+        ROOT_SECRET=$(grep '^AUTH_SECRET=' .env | cut -d= -f2-)
+        ROOT_PASSWORD=$(grep '^ADMIN_PASSWORD=' .env | cut -d= -f2-)
+        if [[ "$OSTYPE" == "darwin"* ]]; then
+            sed -i '' "s|^AUTH_SECRET=.*|AUTH_SECRET=$ROOT_SECRET|" apps/dashboard/.env.local
+            sed -i '' "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$ROOT_PASSWORD|" apps/dashboard/.env.local
+        else
+            sed -i "s|^AUTH_SECRET=.*|AUTH_SECRET=$ROOT_SECRET|" apps/dashboard/.env.local
+            sed -i "s|^ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$ROOT_PASSWORD|" apps/dashboard/.env.local
+        fi
+        ok "apps/dashboard/.env.local created (credentials copied from root .env)"
+    else
+        warn "Fill in ADMIN_PASSWORD and AUTH_SECRET in apps/dashboard/.env.local"
+    fi
+else
+    ok "apps/dashboard/.env.local exists"
 fi
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
