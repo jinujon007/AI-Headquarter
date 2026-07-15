@@ -8,11 +8,11 @@ const CHAT_STORAGE_KEY = "aihq:ceo-chat-history";
 const MAX_HISTORY = 100;
 
 const PROVIDER_KEYS: Record<string, { key: string; label: string }> = {
-  openai: { key: "apiKey_openai", label: "OpenAI" },
-  anthropic: { key: "apiKey_anthropic", label: "Anthropic" },
+  anthropic:  { key: "apiKey_anthropic",  label: "Claude"     },
+  openai:     { key: "apiKey_openai",     label: "OpenAI"     },
   openrouter: { key: "apiKey_openrouter", label: "OpenRouter" },
-  groq: { key: "apiKey_groq", label: "Groq" },
-  gemini: { key: "apiKey_gemini", label: "Gemini" },
+  groq:       { key: "apiKey_groq",       label: "Groq"       },
+  gemini:     { key: "apiKey_gemini",     label: "Gemini"     },
 };
 
 interface CeoChatProps {
@@ -27,40 +27,55 @@ type ChatMessage = {
   ts: number;
   id: string;
   streaming?: boolean;
+  isReport?: boolean;
 };
 
 export function CeoChat({ messages, onClose }: CeoChatProps) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [localMessages, setLocalMessages] = useState<ChatMessage[]>([]);
+  const [activeProvider, setActiveProvider] = useState<{ name: string; label: string } | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load persisted chat on mount
+  // Load persisted chat and detect active BYOK provider on mount
   useEffect(() => {
     try {
       const raw = localStorage.getItem(CHAT_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setLocalMessages(parsed.slice(-MAX_HISTORY));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setLocalMessages(parsed.slice(-MAX_HISTORY));
       }
-    } catch {
-      // ignore corrupted localStorage
+    } catch { /* ignore */ }
+
+    // P-03: detect active provider
+    for (const [provider, config] of Object.entries(PROVIDER_KEYS)) {
+      if (localStorage.getItem(config.key)) {
+        setActiveProvider({ name: provider, label: config.label });
+        break;
+      }
     }
   }, []);
 
-  // Merge WS agent messages into the local view
+  // Merge WS agent messages into local view.
+  // Skip non-report PA messages — those arrive via SSE and are already in the streaming bubble.
+  // Only merge: (1) isReport=true PA completions, (2) non-PA agent messages.
   useEffect(() => {
     if (messages.length === 0) return;
     const latest = messages[0];
+    if (latest.agentId === "pa" && !latest.isReport) return;
     setLocalMessages((prev) => {
-      const alreadyExists = prev.some(
-        (m) => m.role === "agent" && m.ts === latest.timestamp
-      );
+      const alreadyExists = prev.some((m) => m.role === "agent" && m.ts === latest.timestamp);
       if (alreadyExists) return prev;
       return [
-        { role: "agent", text: latest.message, agentId: latest.agentId, ts: latest.timestamp, id: `msg_${latest.timestamp}` },
         ...prev,
+        {
+          role: "agent",
+          text: latest.message,
+          agentId: latest.agentId,
+          ts: latest.timestamp,
+          id: `msg_${latest.timestamp}`,
+          isReport: latest.isReport,
+        },
       ];
     });
   }, [messages]);
@@ -69,13 +84,10 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [localMessages, sending]);
 
-  // Persist chat history
   useEffect(() => {
     try {
       localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify(localMessages.slice(-MAX_HISTORY)));
-    } catch {
-      // ignore storage write failures
-    }
+    } catch { /* ignore */ }
   }, [localMessages]);
 
   const getBYOKHeaders = () => {
@@ -109,10 +121,7 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
       const byokHeaders = getBYOKHeaders();
       const res = await fetch("/api/ceo/message", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...byokHeaders,
-        },
+        headers: { "Content-Type": "application/json", ...byokHeaders },
         body: JSON.stringify({ content: text }),
       });
 
@@ -121,8 +130,10 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let receivedReply = false;
+      let streamEnded = false;
 
-      while (true) {
+      while (!streamEnded) {
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -135,36 +146,41 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
           try {
             const event = JSON.parse(line.slice(6));
             if (event.type === "token" && event.token) {
+              receivedReply = true;
               setLocalMessages((prev) =>
-                prev.map((m) =>
-                  m.id === streamMsgId ? { ...m, text: m.text + event.token } : m
-                )
+                prev.map((m) => m.id === streamMsgId ? { ...m, text: m.text + event.token } : m)
               );
             }
-            if (event.type === "done") {
+            if (event.type === "done" || event.type === "end") {
+              receivedReply = true;
+              streamEnded = true;
               setLocalMessages((prev) =>
-                prev.map((m) =>
-                  m.id === streamMsgId ? { ...m, streaming: false } : m
-                )
+                prev.map((m) => m.id === streamMsgId ? { ...m, streaming: false } : m)
               );
             }
             if (event.type === "error") {
+              streamEnded = true;
               setLocalMessages((prev) =>
-                prev.map((m) =>
-                  m.id === streamMsgId ? { ...m, text: event.message || "Error.", streaming: false } : m
-                )
+                prev.map((m) => m.id === streamMsgId ? { ...m, text: event.message || "Error.", streaming: false } : m)
               );
             }
-          } catch {
-            // malformed SSE line
-          }
+          } catch { /* malformed SSE line */ }
         }
       }
-    } catch {
+      // Don't wait for the proxy's 60s abort if the server never closes the stream
+      if (streamEnded) reader.cancel().catch(() => { /* ignore */ });
+      // Finalize the bubble: clear the cursor; only show an error if nothing arrived
       setLocalMessages((prev) =>
         prev.map((m) =>
-          m.id === streamMsgId ? { ...m, text: "Server unreachable.", streaming: false } : m
+          m.id === streamMsgId
+            ? { ...m, streaming: false, text: m.text || (receivedReply ? m.text : "Server unreachable.") }
+            : m
         )
+      );
+    } catch {
+      // Keep any partial/full reply already streamed; only report unreachable if nothing arrived
+      setLocalMessages((prev) =>
+        prev.map((m) => m.id === streamMsgId ? { ...m, text: m.text || "Server unreachable.", streaming: false } : m)
       );
     } finally {
       setSending(false);
@@ -172,10 +188,7 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
   };
 
   const handleKey = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   };
 
   return (
@@ -196,7 +209,7 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
         maxHeight: "340px",
       }}
     >
-      {/* Header */}
+      {/* Header — P-03: active provider badge */}
       <div
         style={{
           display: "flex",
@@ -209,6 +222,40 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
         <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "#FFCC00" }}>
           <MessageSquare style={{ width: 16, height: 16 }} />
           <span style={{ fontSize: "0.85rem", fontWeight: 600 }}>CEO → Alex (PA)</span>
+          {activeProvider && (
+            <span
+              style={{
+                fontSize: "0.65rem",
+                fontWeight: 700,
+                backgroundColor: "rgba(255,204,0,0.15)",
+                border: "1px solid rgba(255,204,0,0.4)",
+                color: "#FFCC00",
+                borderRadius: "0.3rem",
+                padding: "1px 6px",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              {activeProvider.label}
+            </span>
+          )}
+          {!activeProvider && (
+            <span
+              style={{
+                fontSize: "0.65rem",
+                fontWeight: 700,
+                backgroundColor: "rgba(100,100,100,0.2)",
+                border: "1px solid rgba(100,100,100,0.4)",
+                color: "#888",
+                borderRadius: "0.3rem",
+                padding: "1px 6px",
+                letterSpacing: "0.04em",
+                textTransform: "uppercase",
+              }}
+            >
+              Ollama
+            </span>
+          )}
         </div>
         {onClose && (
           <button onClick={onClose} style={{ color: "#666", background: "none", border: "none", cursor: "pointer" }}>
@@ -239,31 +286,47 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
             key={msg.id || i}
             style={{
               alignSelf: msg.role === "ceo" ? "flex-end" : "flex-start",
-              maxWidth: "80%",
-              backgroundColor: msg.role === "ceo" ? "#FFCC00" : "rgba(255,255,255,0.08)",
+              maxWidth: "85%",
+              // P-02: report bubble has distinct amber border + slightly different bg
+              backgroundColor: msg.isReport
+                ? "rgba(255, 204, 0, 0.1)"
+                : msg.role === "ceo"
+                  ? "#FFCC00"
+                  : "rgba(255,255,255,0.08)",
               color: msg.role === "ceo" ? "#000" : "#e0e0e0",
               padding: "0.4rem 0.75rem",
               borderRadius: "0.5rem",
               fontSize: "0.82rem",
               lineHeight: 1.4,
+              border: msg.isReport ? "1px solid rgba(255,204,0,0.5)" : "none",
             }}
           >
             {msg.role === "agent" && (
-              <span style={{ color: "#FFCC00", fontSize: "0.7rem", display: "block", marginBottom: 2 }}>
-                {msg.agentId || "Agent"}
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  display: "block",
+                  marginBottom: 2,
+                  color: msg.isReport ? "#FFCC00" : "rgba(255,204,0,0.7)",
+                  fontWeight: msg.isReport ? 700 : 400,
+                }}
+              >
+                {msg.isReport ? "📋 Alex — Report" : (msg.agentId || "Agent")}
               </span>
             )}
             {msg.text}
             {msg.streaming && (
-              <span style={{
-                display: "inline-block",
-                width: "2px",
-                height: "1em",
-                background: "currentColor",
-                marginLeft: "2px",
-                verticalAlign: "text-bottom",
-                animation: "blink 1s step-end infinite",
-              }} />
+              <span
+                style={{
+                  display: "inline-block",
+                  width: "2px",
+                  height: "1em",
+                  background: "currentColor",
+                  marginLeft: "2px",
+                  verticalAlign: "text-bottom",
+                  animation: "blink 1s step-end infinite",
+                }}
+              />
             )}
           </div>
         ))}
@@ -319,10 +382,7 @@ export function CeoChat({ messages, onClose }: CeoChatProps) {
       </div>
 
       <style>{`
-        @keyframes blink {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0; }
-        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
       `}</style>
     </div>
   );

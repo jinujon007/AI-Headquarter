@@ -1,15 +1,16 @@
 'use client';
 
-import { Canvas } from '@react-three/fiber';
+import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Sky, Environment, Text } from '@react-three/drei';
-import { Suspense, useState, useEffect, useMemo } from 'react';
-import { Vector3 } from 'three';
-import { AGENTS, CEO_ZONE, BOARD_ROOM_ZONE } from './agentsConfig';
-import type { AgentState } from './agentsConfig';
+import { Suspense, useState, useEffect, useMemo, useRef } from 'react';
+import { Vector3, Group } from 'three';
+import { AGENTS, CEO_ZONE, BOARD_ROOM_ZONE, HIRE_DESK_POSITIONS, HIRE_COLORS } from './agentsConfig';
+import type { AgentConfig, AgentState } from './agentsConfig';
 import AgentDesk from './AgentDesk';
 import Floor from './Floor';
 import Walls from './Walls';
 import Lights from './Lights';
+import VoxelAvatar from './VoxelAvatar';
 import AgentPanel from './AgentPanel';
 import FileCabinet from './FileCabinet';
 import Whiteboard from './Whiteboard';
@@ -21,31 +22,138 @@ import MovingAvatar from './MovingAvatar';
 import { useOfficeWs } from '@/hooks/use-office-ws';
 import { CeoChat } from '@/components/CeoChat';
 
+// Walks an agent from their desk to a Board Room seat and holds them there while
+// the meeting is active. Module-scope so Office3D re-renders don't remount it.
+function BoardSeatAvatar({ agent, seat }: { agent: AgentConfig; seat: Vector3 }) {
+  const WALK_MS = 2000;
+  const startRef = useRef(performance.now());
+  const groupRef = useRef<Group>(null!);
+  const from = useMemo(
+    () => new Vector3(agent.position[0], 0.6, agent.position[2]),
+    [agent],
+  );
+
+  useFrame(() => {
+    const rawT = Math.min((performance.now() - startRef.current) / WALK_MS, 1);
+    const smoothT = rawT < 0.5
+      ? 4 * rawT * rawT * rawT
+      : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
+    if (!groupRef.current) return;
+    groupRef.current.position.lerpVectors(from, seat, smoothT);
+    // Face the board table centre
+    groupRef.current.lookAt(BOARD_ROOM_ZONE[0], 0.6, BOARD_ROOM_ZONE[2]);
+  });
+
+  return (
+    <group ref={groupRef} scale={3}>
+      <VoxelAvatar
+        agent={agent}
+        position={[0, 0, 0]}
+        isWorking={false}
+        isThinking={false}
+        isError={false}
+      />
+    </group>
+  );
+}
+
 export default function Office3D() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [interactionModal, setInteractionModal] = useState<string | null>(null);
   const [controlMode, setControlMode] = useState<'orbit' | 'fps'>('orbit');
   const [showChat, setShowChat] = useState(false);
   const [avatarPositions, setAvatarPositions] = useState<Map<string, any>>(new Map());
-  
+  const [toasts, setToasts] = useState<Array<{ id: string; title: string; outputPath?: string; failed: boolean }>>([]);
+  const seenTaskIds = useRef<Set<string>>(new Set());
+
+  // T-081: when PA delivers a completion report to CEO, PA's 3D avatar walks to the
+  // CEO corner for 3 s then returns to desk automatically.
+  const [paCornerOverride, setPaCornerOverride] = useState(false);
+  const paCornerTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const ws = useOfficeWs();
 
+  // P-01: task completion toast
+  useEffect(() => {
+    ws.tasks.forEach((task) => {
+      if ((task.status === 'completed' || task.status === 'failed') && !seenTaskIds.current.has(task.id)) {
+        seenTaskIds.current.add(task.id);
+        const toast = { id: task.id, title: task.title, outputPath: task.outputPath, failed: task.status === 'failed' };
+        setToasts((prev) => [...prev, toast]);
+        setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== task.id)), 5000);
+      }
+    });
+  }, [ws.tasks]);
+
+  // Hired agents → in-room desk slots. Server desk coords are legacy-space
+  // (outside this room), so the hire slot index picks a client-side position.
+  const hiredConfigs = useMemo<AgentConfig[]>(
+    () =>
+      ws.hiredAgents.map((h, i) => {
+        const slot = parseInt(h.id.split('_')[1] ?? '', 10);
+        const idx = Number.isFinite(slot) ? slot : i;
+        return {
+          id: h.id,
+          name: h.name,
+          emoji: h.emoji || '🧑‍💼',
+          position: HIRE_DESK_POSITIONS[idx % HIRE_DESK_POSITIONS.length],
+          color: HIRE_COLORS[idx % HIRE_COLORS.length],
+          role: h.role,
+        };
+      }),
+    [ws.hiredAgents],
+  );
+
+  const allAgents = useMemo(() => [...AGENTS, ...hiredConfigs], [hiredConfigs]);
+
   const agentStates = useMemo<Record<string, AgentState>>(() => {
-    const base: Record<string, AgentState> = {
-      pa: { id: 'pa', status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 },
-      dev: { id: 'dev', status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 },
-      researcher: { id: 'researcher', status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 },
-      copywriter: { id: 'copywriter', status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 },
-      analyst: { id: 'analyst', status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 },
-    };
+    const base: Record<string, AgentState> = {};
+    for (const agent of allAgents) {
+      base[agent.id] = { id: agent.id, status: 'idle', model: 'ollama', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 };
+    }
     // Overlay live WS statuses
     for (const [id, status] of Object.entries(ws.agentStatuses)) {
       if (base[id]) base[id] = { ...base[id], status };
     }
     return base;
-  }, [ws.agentStatuses]);
+  }, [ws.agentStatuses, allAgents]);
+
+  // Board meeting: seat positions in a circle around the Board Room zone
+  const boardSeats = useMemo<Record<string, Vector3>>(() => {
+    const seats: Record<string, Vector3> = {};
+    const n = ws.boardMeeting.participants.length || 1;
+    ws.boardMeeting.participants.forEach((id, i) => {
+      const angle = (i / n) * Math.PI * 2;
+      seats[id] = new Vector3(
+        BOARD_ROOM_ZONE[0] + Math.cos(angle) * 1.3,
+        0.6,
+        BOARD_ROOM_ZONE[2] + Math.sin(angle) * 1.3,
+      );
+    });
+    return seats;
+  }, [ws.boardMeeting.participants]);
 
   const DEFAULT_STATE: AgentState = { id: '', status: 'idle', tokensPerHour: 0, tasksInQueue: 0, uptime: 0 };
+
+  // T-081: Listen for PA→CEO report deliveries and animate PA toward the CEO corner
+  useEffect(() => {
+    if (!ws.paHeadingToCeo) {
+      // Report ended / nil: drop the override; PA returns to normal movement
+      setPaCornerOverride(false);
+      if (paCornerTimer.current) { clearTimeout(paCornerTimer.current); paCornerTimer.current = null; }
+      return;
+    }
+
+    setPaCornerOverride(true);                    // show the walking overlay
+    paCornerTimer.current = setTimeout(() => {   // after 3 s: drop override back to desk
+      setPaCornerOverride(false);
+      paCornerTimer.current = null;
+    }, 3000);
+
+    return () => {
+      if (paCornerTimer.current) { clearTimeout(paCornerTimer.current); paCornerTimer.current = null; }
+    };
+  }, [ws.paHeadingToCeo]);
 
   const handleDeskClick = (agentId: string) => {
     setSelectedAgent(agentId);
@@ -67,6 +175,23 @@ export default function Office3D() {
     setInteractionModal('energy');
   };
 
+  // Energy modal: real usage numbers from /api/costs (null while loading / unreachable)
+  const [energyStats, setEnergyStats] = useState<{ cost: number; tokens: number } | null>(null);
+  useEffect(() => {
+    if (interactionModal !== 'energy') return;
+    setEnergyStats(null);
+    fetch('/api/costs')
+      .then((r) => r.json())
+      .then((d) => {
+        const byAgent: Array<{ tokens?: number }> = Array.isArray(d?.byAgent) ? d.byAgent : [];
+        setEnergyStats({
+          cost: typeof d?.today === 'number' ? d.today : 0,
+          tokens: byAgent.reduce((sum, a) => sum + (a.tokens || 0), 0),
+        });
+      })
+      .catch(() => setEnergyStats(null));
+  }, [interactionModal]);
+
   const handleCloseModal = () => {
     setInteractionModal(null);
   };
@@ -77,8 +202,8 @@ export default function Office3D() {
 
   // Obstacle map (furniture collision radii)
   const obstacles = [
-    // Agent desks
-    ...AGENTS.map(agent => ({
+    // Agent desks (core + hired)
+    ...allAgents.map(agent => ({
       position: new Vector3(agent.position[0], 0, agent.position[2]),
       radius: 1.5
     })),
@@ -95,8 +220,39 @@ export default function Office3D() {
     { position: new Vector3(9, 0, 0), radius: 0.4 },
   ];
 
+  // T-081: PA walks to CEO Corner on final report delivery (3 s, ease-in-out)
+  function PAWalkToCeo() {
+    const WALK_MS = 3000;
+    const startRef = useRef(performance.now());
+    const groupRef = useRef<Group>(null!);
+    const FROM = new Vector3(-5, 0.2, -4);      // PA desk (matches AgentDesk.x/pa-desk position)
+    const TO   = new Vector3(CEO_ZONE[0], 0.2, CEO_ZONE[2]); // CEO Corner
+
+    useFrame(() => {
+      const elapsed = performance.now() - startRef.current;
+      const rawT    = Math.min(elapsed / WALK_MS, 1);
+      const smoothT = rawT < 0.5
+        ? 4 * rawT * rawT * rawT
+        : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
+      groupRef.current?.position.lerpVectors(FROM, TO, smoothT);
+    });
+
+    return (
+      <group ref={groupRef}>
+        <VoxelAvatar
+          agent={AGENTS.find(a => a.id === 'pa')!}
+          position={[0, 0, 0]}
+          isWorking={false}
+          isThinking={true}
+          isError={false}
+        />
+      </group>
+    );
+  }
+
+  // Offset for the fixed dock (68px left) and status bar (32px bottom) so overlays are never clipped
   return (
-    <div className="fixed inset-0 bg-gray-900" style={{ height: '100vh', width: '100vw' }}>
+    <div className="fixed bg-gray-900" style={{ top: 0, left: 68, right: 0, bottom: 32 }}>
       <Canvas
         camera={{ position: [0, 8, 12], fov: 60 }}
         shadows
@@ -138,24 +294,27 @@ export default function Office3D() {
             CEO CORNER
           </Text>
 
-          {/* Board Room zone marker */}
-          <mesh position={[BOARD_ROOM_ZONE[0], 0.01, BOARD_ROOM_ZONE[2]]} rotation={[-Math.PI / 2, 0, 0]}>
-            <circleGeometry args={[1.8, 32]} />
-            <meshStandardMaterial color="#9C27B0" transparent opacity={0.12} />
-          </mesh>
-          <Text
-            position={[BOARD_ROOM_ZONE[0], 0.05, BOARD_ROOM_ZONE[2]]}
-            rotation={[-Math.PI / 2, 0, 0]}
-            fontSize={0.35}
-            color="#9C27B0"
-            anchorX="center"
-            anchorY="middle"
-          >
-            BOARD ROOM
+           {/* Board Room zone marker */}
+           <mesh position={[BOARD_ROOM_ZONE[0], 0.01, BOARD_ROOM_ZONE[2]]} rotation={[-Math.PI / 2, 0, 0]}>
+             <circleGeometry args={[1.8, 32]} />
+             <meshStandardMaterial color="#9C27B0" transparent opacity={0.12} />
+           </mesh>
+           <Text
+             position={[BOARD_ROOM_ZONE[0], 0.05, BOARD_ROOM_ZONE[2]]}
+             rotation={[-Math.PI / 2, 0, 0]}
+             fontSize={0.35}
+             color="#9C27B0"
+             anchorX="center"
+             anchorY="middle"
+           >
+             BOARD ROOM
           </Text>
 
-          {/* Agent desks */}
-          {AGENTS.map((agent) => (
+           {/* T-081: PA walks to CEO Corner when delivering a completion report */}
+           {paCornerOverride && <PAWalkToCeo />}
+
+           {/* Agent desks (core + hired) */}
+          {allAgents.map((agent) => (
             <AgentDesk
               key={agent.id}
               agent={agent}
@@ -165,18 +324,26 @@ export default function Office3D() {
             />
           ))}
 
-          {/* Avatares móviles */}
-          {AGENTS.map((agent) => (
-            <MovingAvatar
-              key={`avatar-${agent.id}`}
-              agent={agent}
-              state={agentStates[agent.id] ?? { ...DEFAULT_STATE, id: agent.id }}
-              officeBounds={{ minX: -8, maxX: 8, minZ: -7, maxZ: 7 }}
-              obstacles={obstacles}
-              otherAvatarPositions={avatarPositions}
-              onPositionUpdate={handleAvatarPositionUpdate}
-            />
-          ))}
+          {/* Avatares móviles — board meeting participants sit at the table instead of wandering */}
+          {allAgents.map((agent) =>
+            ws.boardMeeting.active && boardSeats[agent.id] ? (
+              <BoardSeatAvatar
+                key={`avatar-${agent.id}`}
+                agent={agent}
+                seat={boardSeats[agent.id]}
+              />
+            ) : (
+              <MovingAvatar
+                key={`avatar-${agent.id}`}
+                agent={agent}
+                state={agentStates[agent.id] ?? { ...DEFAULT_STATE, id: agent.id }}
+                officeBounds={{ minX: -8, maxX: 8, minZ: -7, maxZ: 7 }}
+                obstacles={obstacles}
+                otherAvatarPositions={avatarPositions}
+                onPositionUpdate={handleAvatarPositionUpdate}
+              />
+            )
+          )}
 
           {/* Mobiliario interactivo */}
           <FileCabinet
@@ -221,7 +388,7 @@ export default function Office3D() {
       {/* Panel lateral cuando se selecciona un agente */}
       {selectedAgent && (
         <AgentPanel
-          agent={AGENTS.find(a => a.id === selectedAgent)!}
+          agent={allAgents.find(a => a.id === selectedAgent)!}
           state={agentStates[selectedAgent]}
           onClose={handleClosePanel}
         />
@@ -290,21 +457,24 @@ export default function Office3D() {
                   <p className="text-lg">⚡ Agent activity and energy levels</p>
                   <div className="bg-gray-800 p-4 rounded border border-gray-700 space-y-3">
                     <div>
-                      <p className="text-sm text-gray-400">Tokens consumed today:</p>
-                      <p className="text-2xl font-bold text-yellow-400">47,000</p>
+                      <p className="text-sm text-gray-400">Tokens consumed:</p>
+                      <p className="text-2xl font-bold text-yellow-400">
+                        {energyStats ? energyStats.tokens.toLocaleString() : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-gray-400">Cost today:</p>
+                      <p className="text-2xl font-bold text-blue-400">
+                        {energyStats ? `$${energyStats.cost.toFixed(2)}` : '—'}
+                      </p>
                     </div>
                     <div>
                       <p className="text-sm text-gray-400">Active agents:</p>
-                      <p className="text-2xl font-bold text-green-400">3 / 6</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-400">System uptime:</p>
-                      <p className="text-2xl font-bold text-blue-400">12h 34m</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        {Object.values(agentStates).filter((s) => s.status !== 'idle').length} / {allAgents.length}
+                      </p>
                     </div>
                   </div>
-                  <p className="text-sm text-gray-500 italic">
-                    This would show real-time agent mood/productivity metrics
-                  </p>
                 </>
               )}
             </div>
@@ -364,6 +534,36 @@ export default function Office3D() {
         />
       )}
 
+      {/* P-01: Task completion toasts */}
+      <div className="absolute top-16 right-4 flex flex-col gap-2 z-50" style={{ maxWidth: '300px' }}>
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            style={{
+              backgroundColor: toast.failed ? 'rgba(220,38,38,0.92)' : 'rgba(10,10,20,0.92)',
+              border: `1px solid ${toast.failed ? '#ef4444' : '#22c55e'}`,
+              borderRadius: '0.5rem',
+              padding: '0.6rem 0.9rem',
+              backdropFilter: 'blur(10px)',
+              color: '#fff',
+              fontSize: '0.8rem',
+              lineHeight: 1.4,
+              animation: 'slideInRight 0.2s ease',
+            }}
+          >
+            <div style={{ fontWeight: 700, marginBottom: '2px', color: toast.failed ? '#fca5a5' : '#4ade80' }}>
+              {toast.failed ? '✗ Task failed' : '✓ Task complete'}
+            </div>
+            <div style={{ color: '#ccc' }}>{toast.title.slice(0, 60)}{toast.title.length > 60 ? '…' : ''}</div>
+            {toast.outputPath && (
+              <div style={{ color: '#FFCC00', fontSize: '0.72rem', marginTop: '2px' }}>
+                → {toast.outputPath.split('/').pop()}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
       {/* WS status dot */}
       <div
         className="absolute top-4 right-4 flex items-center gap-1.5 text-xs bg-black/60 px-2.5 py-1.5 rounded-full"
@@ -375,7 +575,7 @@ export default function Office3D() {
 
       {/* Legend */}
       <div className="absolute bottom-4 right-4 bg-black/70 text-white p-4 rounded-lg backdrop-blur-sm">
-        <h3 className="text-sm font-bold mb-2">Estados</h3>
+        <h3 className="text-sm font-bold mb-2">Status</h3>
         <div className="text-xs space-y-1">
           <div className="flex items-center gap-2">
             <div className="w-3 h-3 bg-green-500 rounded-full"></div>

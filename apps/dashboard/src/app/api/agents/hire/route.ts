@@ -5,9 +5,12 @@ import { API } from '@/lib/paths';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const forwardHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    const serverKey = process.env.AIHQ_SERVER_KEY;
+    if (serverKey) forwardHeaders['x-aihq-key'] = serverKey;
     const res = await fetch(API.agentsHire, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: forwardHeaders,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(5000),
     });

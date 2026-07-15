@@ -1,16 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, HardDrive, MemoryStick, Shield, ShieldCheck, Clock } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Clock } from "lucide-react";
 
 interface SystemStats {
   cpu: number;
   ram: { used: number; total: number };
   disk: { used: number; total: number };
-  vpnActive: boolean;
-  firewallActive: boolean;
-  activeServices: number;
-  totalServices: number;
   uptime: string;
 }
 
@@ -19,12 +15,9 @@ export function StatusBar() {
     cpu: 0,
     ram: { used: 0, total: 4 },
     disk: { used: 0, total: 100 },
-    vpnActive: false,
-    firewallActive: true,
-    activeServices: 0,
-    totalServices: 4,
     uptime: "0d 0h",
   });
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -32,10 +25,17 @@ export function StatusBar() {
         const res = await fetch("/api/system/stats");
         if (res.ok) {
           const data = await res.json();
-          setStats(data);
+          setStats((prev) => ({ ...prev, ...data }));
         }
       } catch (error) {
         console.error("Failed to fetch system stats:", error);
+      }
+      try {
+        const health = await fetch("/api/health");
+        const body = health.ok ? await health.json() : null;
+        setServerOnline(Boolean(body?.server?.ok ?? health.ok));
+      } catch {
+        setServerOnline(false);
       }
     };
 
@@ -48,7 +48,10 @@ export function StatusBar() {
   const cpuColor = stats.cpu < 60 ? "var(--positive)" : stats.cpu < 85 ? "var(--warning)" : "var(--negative)";
   const ramPercent = (stats.ram.used / stats.ram.total) * 100;
   const ramColor = ramPercent < 60 ? "var(--positive)" : ramPercent < 85 ? "var(--warning)" : "var(--negative)";
-  const diskPercent = (stats.disk.used / stats.disk.total) * 100;
+  const rawDiskPercent = (stats.disk.used / stats.disk.total) * 100;
+  // Disk metrics are unavailable on some platforms (Windows reports total=0 → Infinity)
+  const diskAvailable = Number.isFinite(rawDiskPercent) && stats.disk.total > 0;
+  const diskPercent = diskAvailable ? rawDiskPercent : 0;
   const diskColor = diskPercent < 60 ? "var(--positive)" : diskPercent < 85 ? "var(--warning)" : "var(--negative)";
 
   // StatusMetric component
@@ -129,26 +132,29 @@ export function StatusBar() {
         color={ramColor}
       />
 
-      {/* Disk */}
-      <StatusMetric
-        icon={HardDrive}
-        label="DISK"
-        value={`${diskPercent.toFixed(0)}%`}
-        barPercent={diskPercent}
-        color={diskColor}
-      />
+      {/* Disk — hidden when the platform can't report it */}
+      {diskAvailable && (
+        <StatusMetric
+          icon={HardDrive}
+          label="DISK"
+          value={`${diskPercent.toFixed(0)}%`}
+          barPercent={diskPercent}
+          color={diskColor}
+        />
+      )}
 
       {/* Separator */}
       <div style={{ width: "1px", height: "16px", backgroundColor: "var(--border)" }} />
 
-      {/* VPN Status */}
+      {/* Agent server connection */}
       <div className="flex items-center gap-1">
         <div
           style={{
             width: "6px",
             height: "6px",
             borderRadius: "50%",
-            backgroundColor: stats.vpnActive ? "var(--positive)" : "var(--negative)",
+            backgroundColor:
+              serverOnline === null ? "var(--text-muted)" : serverOnline ? "var(--positive)" : "var(--negative)",
           }}
         />
         <span
@@ -160,46 +166,7 @@ export function StatusBar() {
             color: "var(--text-muted)",
           }}
         >
-          VPN
-        </span>
-      </div>
-
-      {/* Firewall Status */}
-      <div className="flex items-center gap-1">
-        <ShieldCheck
-          style={{
-            width: "12px",
-            height: "12px",
-            color: stats.firewallActive ? "var(--positive)" : "var(--negative)",
-          }}
-        />
-        <span
-          style={{
-            fontFamily: "var(--font-body)",
-            fontSize: "10px",
-            fontWeight: 600,
-            letterSpacing: "1px",
-            color: "var(--text-muted)",
-          }}
-        >
-          UFW
-        </span>
-      </div>
-
-      {/* Separator */}
-      <div style={{ width: "1px", height: "16px", backgroundColor: "var(--border)" }} />
-
-      {/* Systemd Services */}
-      <div className="flex items-center gap-1">
-        <span
-          style={{
-            fontFamily: "var(--font-body)",
-            fontSize: "10px",
-            fontWeight: 500,
-            color: "var(--text-muted)",
-          }}
-        >
-          SVC: {stats.activeServices}/{stats.totalServices}
+          SERVER
         </span>
       </div>
 

@@ -249,6 +249,11 @@ export function getActivities(opts: GetActivitiesOptions = {}): ActivitiesResult
   };
 }
 
+export function clearActivities(): number {
+  const db = getDb();
+  return db.prepare('DELETE FROM activities').run().changes;
+}
+
 export function getActivityStats(): {
   total: number;
   today: number;
