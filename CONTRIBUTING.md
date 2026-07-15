@@ -6,9 +6,33 @@
 git clone <repo>
 npm install
 cp .env.example .env   # fill in ADMIN_PASSWORD + AUTH_SECRET
-ollama pull llama3.1:8b
+ollama pull llama3.2:3b
 npm run dev            # starts server (3001) + dashboard (3000)
 ```
+
+## Running Tests
+
+Tests live in `apps/server` and `packages/adapters` (Jest):
+
+```bash
+cd apps/server && npx jest
+cd packages/adapters && npx jest
+```
+
+Or via the workspace scripts: `npm test -w apps/server` and `npm test -w packages/adapters`. Run both before opening a PR — CI runs them too.
+
+## Commit Messages
+
+This repo uses [semantic-release](https://github.com/semantic-release/semantic-release) — versioning and the GitHub release are derived from commit messages. Use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```
+feat: add Groq streaming support        → minor release
+fix: correct SSE parsing in AnthropicAdapter   → patch release
+feat!: change adapter interface          → major release (breaking)
+docs: / chore: / refactor: / test:       → no release
+```
+
+Commits that don't follow this format won't trigger a release. Use it for every commit on `main` (and for PR titles, so squashed merges stay conventional).
 
 ## Adding a New Agent
 

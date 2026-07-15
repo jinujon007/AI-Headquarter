@@ -3,54 +3,57 @@
 # AI HQ — Run Your Own AI Startup
 
 **You are the CEO. AI agents are your team.**  
-Give a directive. Watch agents collaborate in a 3D office and deliver real files to your workspace.
+Type a directive. Watch agents collaborate in a live 3D office and deliver real files to your workspace.
 
 [![CI](https://github.com/jinujon007/AI-Headquarter/actions/workflows/ci.yml/badge.svg)](https://github.com/jinujon007/AI-Headquarter/actions/workflows/ci.yml)
-[![GitHub stars](https://img.shields.io/github/stars/jinujon007/AI-Headquarter?style=social)](https://github.com/jinujon007/AI-Headquarter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](package.json)
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new/template?template=https://github.com/jinujon007/AI-Headquarter)
+[![Open in Dev Containers](https://img.shields.io/static/v1?label=Dev%20Containers&message=Open&color=blue&logo=visualstudiocode)](https://vscode.dev/redirect?url=vscode://ms-vscode-remote.remote-containers/cloneInVolume?url=https://github.com/jinujon007/AI-Headquarter)
 
-> **Demo GIF coming soon** — [star to get notified at launch](https://github.com/jinujon007/AI-Headquarter)
+<!-- DEMO GIF: replace this line with: ![AI HQ Demo](docs/demo.gif) -->
+> **Demo GIF:** see the [recording script](examples/demo-workflows/recording-script.md) — first recorded run will be added here.
 
 </div>
 
 ---
 
-## What is AI HQ?
+## What it does
 
-AI HQ is a local-first, open source browser dashboard where you run an AI startup.
+```
+You type:  "Build a landing page for a SaaS that helps restaurants manage food waste"
 
-- **3D office** (React Three Fiber) — agents have desks, walk to the board room, go idle
-- **Multi-agent runtime** (Colyseus + Ollama) — agents think, delegate, and execute tools
-- **CEO chat** — type a directive, PA agent routes it, specialists deliver output files
-- **BYOK** — Claude, OpenAI, OpenRouter, Groq, Gemini — or run 100% free with Ollama
+PA routes: → Ray (research) + Cleo (copy) + Dev (HTML)
+Agents:      board meeting → each agent works → files written to output/
+PA reports: "Done. output/dev/landing-page.html is ready."
+```
 
-**Demo flow:** Type *"Build a landing page for a SaaS that helps restaurants manage food waste"* → PA delegates to Ray (research), Cleo (copy), Dev (HTML) → board meeting → files land in `output/`
+**Everything runs locally. Ollama is the default — no API cost, no data leaves your machine.**  
+Bring your own key (Claude, OpenAI, Groq, Gemini, OpenRouter) if you want faster models.
 
 ---
 
 ## Quick Start
 
-**Prerequisites:** Node.js ≥ 22, [Ollama](https://ollama.com) installed and running
+**Prerequisites:** [Node.js ≥ 22](https://nodejs.org) · [Ollama](https://ollama.com) installed and running
 
 ```bash
 git clone https://github.com/jinujon007/AI-Headquarter.git
 cd AI-Headquarter
-cp .env.example .env          # fill in ADMIN_PASSWORD + AUTH_SECRET
-ollama pull llama3.1:8b
-npm install
-npm run dev                   # server :3001 + dashboard :3000
+cp .env.example .env
+ollama pull llama3.2:3b
+npm install && npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) — login with `ADMIN_PASSWORD`.
+Open **[http://localhost:3000](http://localhost:3000)** — log in with `ADMIN_PASSWORD` from your `.env`.
+
+**Default model:** `llama3.2:3b` (~2 GB — fits in 4 GB VRAM). On GPUs with ≥ 6 GB VRAM, upgrade to `llama3.1:8b` for better quality: `ollama pull llama3.1:8b` and set `OLLAMA_MODEL=llama3.1:8b` in `.env`.
+
+> **Single-tenant:** AI HQ is single-tenant — one instance per user. Do not share a hosted instance; there is no user isolation between people using the same deployment.
 
 ---
 
-## Deploy in One Click
-
-[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template/aihq)
-
-Or Docker:
+## Docker (one command)
 
 ```bash
 cp .env.example .env
@@ -106,6 +109,15 @@ packages/
 CEO chat → POST /api/ceo/message → Alex (PA) → specialist agents
 → tool execution → output files → Colyseus WebSocket → 3D office + activity feed
 ```
+
+---
+
+## Docs
+
+- [Architecture](docs/architecture.md) — system design, think cycle, adapter pattern, data flows
+- [API Reference](docs/api.md) — REST endpoints + Colyseus WebSocket events
+- [Deployment](docs/deployment.md) — local, Docker, Railway, env vars, model selection
+- [Demo workflows](examples/demo-workflows/) — step-by-step example runs
 
 ---
 

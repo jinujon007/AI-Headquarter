@@ -39,30 +39,32 @@ Ray writes findings to `output/researcher/[timestamp]-market-research.md`.
 
 Watch the task board: a "Market Research" task appears as "in-progress".
 
-**Step 3 — Copy (parallel with research)**
+**Step 3 — Copy (after research)**
 
-Cleo (Copywriter) writes landing page copy:
+Cleo (Copywriter) writes landing page copy, with Ray's research injected into her prompt:
 - Headline and subheadline
 - 3 benefit sections
 - Call-to-action copy
 
 Output: `output/copywriter/[timestamp]-landing-copy.md`
 
-**Step 4 — Board Meeting (2:00–3:00)**
+Tasks in a delegation run **sequentially in the PA's order** — each specialist
+receives the actual outputs of the teammates before them.
 
-PA triggers a board meeting. Watch the 3D office:
-- Alex, Dev, and Cleo walk to the board room
-- Each agent speaks (visible in activity feed)
-- PA synthesizes their input into a unified brief for Dev
+**Step 4 — Development (3:00–4:30)**
 
-**Step 5 — Development (3:00–4:30)**
-
-Dev (Developer) builds the HTML file using the copy from Cleo and insights from Ray:
+Dev (Developer) builds the HTML file with Cleo's actual copy and Ray's research in his prompt:
 - Full HTML5 landing page with inline CSS
 - Responsive layout
 - Written to `output/dev/[timestamp]-landing-page.html`
 
 Watch the task board: "Build Landing Page" completes. Click the task to view the file.
+
+**Step 5 — Board Wrapup**
+
+When the batch finishes, the team gathers in the 3D board room for the wrapup
+(a visual summary moment — the collaboration itself happened in the sequential
+context passing above).
 
 **Step 6 — Final Report (4:30–5:00)**
 

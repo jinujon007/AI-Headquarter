@@ -88,15 +88,14 @@ All LLM calls go through an `InferenceAdapter` interface (`packages/core/src/age
 ```
 getAdapter(provider, apiKey):
   'ollama'      → OllamaAdapter     (local HTTP, no key needed)
+  'anthropic'   → AnthropicAdapter  (native /v1/messages API)
   'openai'      → OpenAICompatibleAdapter(api.openai.com)
-  'openrouter'  → OpenAICompatibleAdapter(openrouter.ai)   ← also handles 'anthropic' routing
+  'openrouter'  → OpenAICompatibleAdapter(openrouter.ai)
   'groq'        → OpenAICompatibleAdapter(api.groq.com)
   'gemini'      → OpenAICompatibleAdapter(generativelanguage.googleapis.com/v1beta/openai)
 ```
 
-The `OpenAICompatibleAdapter` works for any provider that implements the OpenAI chat completions API contract. All BYOK providers currently do.
-
-**Important:** Anthropic's native API (`/v1/messages`) differs from the OpenAI schema. Currently, `anthropic` routes through OpenRouter (which accepts OpenAI format). A native `AnthropicAdapter` is on the v0.2.0 roadmap.
+The `OpenAICompatibleAdapter` works for any provider that implements the OpenAI chat completions API contract. Anthropic's native API (`/v1/messages`) differs from the OpenAI schema, so `anthropic` gets its own `AnthropicAdapter` — a fetch-based client (no SDK dependency) that handles `x-api-key` auth, the `anthropic-version` header, and streaming via `content_block_delta` SSE events.
 
 Provider and API key come from request headers (`x-llm-provider`, `x-api-key`), injected by the dashboard from localStorage. Keys are never stored on the server.
 
@@ -165,7 +164,7 @@ Desk positions (hardcoded in `OfficeRoom.furnitureTargets`):
 packages/types      — shared TypeScript interfaces (Agent, Task, OfficeEvent)
                       source of truth for the server↔dashboard API contract
 packages/core       — Agent state machine, memory, InferenceAdapter interface
-packages/adapters   — OllamaAdapter, OpenAICompatibleAdapter, PromptBuilder
+packages/adapters   — OllamaAdapter, AnthropicAdapter, OpenAICompatibleAdapter
 apps/server         — Colyseus room + Express REST API (imports packages/*)
 apps/dashboard      — Next.js 15 app (imports packages/types only)
 ```

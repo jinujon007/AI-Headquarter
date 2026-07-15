@@ -6,6 +6,18 @@ Base URL (local): `http://localhost:3001`
 
 ---
 
+## Authentication (optional)
+
+If `AIHQ_SERVER_KEY` is set in the server environment, the mutating endpoints — `POST /api/ceo/message` and `POST /api/agents/hire` — require a matching header:
+
+```
+x-aihq-key: <your AIHQ_SERVER_KEY>
+```
+
+Requests without it get HTTP 401 `{ "ok": false, "error": "Unauthorized" }`. The dashboard's API routes inject this header server-side from their own environment, so the key never reaches the browser. When `AIHQ_SERVER_KEY` is unset (local dev default), no auth is required.
+
+---
+
 ## REST Endpoints
 
 ### `GET /health`
@@ -23,7 +35,7 @@ Full health check including Ollama connectivity.
 {
   "ok": true,
   "ollamaConnected": true,
-  "models": [{ "name": "llama3.1:8b", ... }],
+  "models": [{ "name": "llama3.2:3b", ... }],
   "activeAgents": 5,
   "uptime": 142.3
 }
@@ -45,7 +57,7 @@ Returns all agents currently in the office.
     "name": "Alex",
     "role": "PA / Orchestrator",
     "status": "idle",
-    "model": "llama3.1:8b",
+    "model": "llama3.2:3b",
     "provider": "ollama",
     "deskPosition": [-6, 0, -5],
     "currentTask": null
@@ -88,6 +100,8 @@ x-llm-provider: openrouter
 x-api-key: sk-or-...
 ```
 
+Valid `x-llm-provider` values: `ollama` (default), `anthropic`, `openai`, `openrouter`, `groq`, `gemini`. The key is used for that request only — never stored server-side.
+
 **Response:** `text/event-stream`. Each event is a JSON object on a `data:` line.
 
 Event types:
@@ -120,6 +134,8 @@ Returns task history from SQLite.
 ]
 ```
 
+`status` is one of: `pending`, `in_progress`, `completed`, `failed`.
+
 ---
 
 ### `GET /api/costs`
@@ -131,7 +147,7 @@ Token usage and estimated cost per session.
 [
   {
     "agentId": "pa",
-    "model": "llama3.1:8b",
+    "model": "llama3.2:3b",
     "date": "2025-05-19",
     "total_prompt_tokens": 1240,
     "total_completion_tokens": 380,
@@ -226,7 +242,12 @@ All events are received via `room.onMessage(type, handler)`.
 
 #### `task:completed`
 ```typescript
-{ type: 'task:completed', taskId: string, outputPath?: string }
+{ type: 'task:completed', task: { id: string, title: string, assignedTo: string, status: 'completed', outputPath: string | null, completedAt: string } }
+```
+
+#### `task:failed`
+```typescript
+{ type: 'task:failed', task: { id: string, title: string, assignedTo: string, status: 'failed', error: string } }
 ```
 
 #### `board:started`
