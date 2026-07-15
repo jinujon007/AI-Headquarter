@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import { useOfficeWs } from "@/hooks/use-office-ws";
 import { StatsCard } from "@/components/StatsCard";
 import { ActivityFeed } from "@/components/ActivityFeed";
-import { WeatherWidget } from "@/components/WeatherWidget";
 import { Notepad } from "@/components/Notepad";
 import {
   Activity,
@@ -81,10 +80,9 @@ export default function DashboardPage() {
         </p>
       </div>
 
-      {/* Stats Grid + Weather */}
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-4 md:mb-6">
-        {/* Stats */}
-        <div className="lg:col-span-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* Stats Grid */}
+      <div className="mb-4 md:mb-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatsCard
             title="Total Activities"
             value={stats.total.toLocaleString()}
@@ -109,11 +107,6 @@ export default function DashboardPage() {
             icon={<XCircle className="w-5 h-5" />}
             iconColor="var(--error)"
           />
-        </div>
-
-        {/* Weather Widget */}
-        <div className="lg:col-span-1">
-          <WeatherWidget />
         </div>
       </div>
 
