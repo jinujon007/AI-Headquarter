@@ -1,61 +1,180 @@
-// Agent types
-export type AgentStatus = 'idle' | 'thinking' | 'working' | 'talking' | 'in-meeting';
-export type AgentRole = 'pa' | 'developer' | 'researcher' | 'copywriter' | 'analyst' | 'custom';
+// Wire contract between apps/server (Colyseus broadcasts + REST) and apps/dashboard.
+// These types mirror what OfficeRoom.ts / index.ts ACTUALLY emit — if you change a
+// payload on the server, update it here so both sides fail typecheck together.
 
-export interface Agent {
+// ─── Agents ──────────────────────────────────────────────────────────────────
+
+/**
+ * Statuses the server actually broadcasts on `agent:status`:
+ * explicit statuses ('idle' | 'thinking' | 'working' | 'in-meeting'), plus raw
+ * schema/decision action values ('work' | 'talk' | 'move' | 'use_tool') that
+ * leak through from the agent state machine. Consumers must tolerate all of them.
+ */
+export type AgentStatus =
+  | 'idle'
+  | 'thinking'
+  | 'working'
+  | 'work'
+  | 'talk'
+  | 'move'
+  | 'use_tool'
+  | 'in-meeting';
+
+/** GET /api/agents item and `agents-sync` payload (OfficeRoom.getAgentList). */
+export interface AgentSummary {
   id: string;
   name: string;
-  role: AgentRole;
+  role: string;
   status: AgentStatus;
   model: string;
-  provider: 'ollama' | 'claude' | 'openai' | 'openrouter' | 'groq' | 'gemini';
+  /** 'ollama' by default; BYOK providers arrive as raw x-llm-provider header strings. */
+  provider: string;
   deskPosition: [number, number, number];
   currentTask?: string;
-  mood?: string;
-  tokenUsage?: { input: number; output: number; total: number };
 }
 
-// Task types
-export type TaskStatus = 'pending' | 'in-progress' | 'done' | 'failed';
+// ─── Tasks (REST) ─────────────────────────────────────────────────────────────
 
-export interface Task {
-  id: string;
+/** Task status values stored in SQLite (tasks.status). */
+export type TaskRecordStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+/** GET /api/tasks row — SELECT * FROM tasks, snake_case straight from SQLite. */
+export interface TaskRecord {
+  id: number;
   title: string;
-  description: string;
-  assignedTo: string;
-  createdBy: string;
-  status: TaskStatus;
-  output?: { type: 'file' | 'text'; path?: string; content?: string };
-  createdAt: string;
-  completedAt?: string;
+  assigned_to: string | null;
+  status: TaskRecordStatus;
+  output_path: string | null;
+  created_at: string;
+  completed_at: string | null;
 }
 
-// CEO message
-export interface CeoMessage {
-  content: string;
-  timestamp: string;
+// ─── Costs (REST) ─────────────────────────────────────────────────────────────
+
+/** GET /api/costs (MemoryStore.getCostsData). */
+export interface CostsData {
+  today: number;
+  yesterday: number;
+  thisMonth: number;
+  lastMonth: number;
+  projected: number;
+  budget: number;
+  byAgent: Array<{ agent: string; cost: number; tokens: number }>;
+  byModel: Array<{ model: string; cost: number; tokens: number }>;
+  daily: Array<{ date: string; cost: number; input: number; output: number }>;
+  /** Not implemented yet — always []. */
+  hourly: unknown[];
 }
 
-// Colyseus WebSocket event types
-export type OfficeEvent =
-  | { type: 'agent:move'; agentId: string; position: [number, number, number] }
-  | { type: 'agent:status'; agentId: string; status: AgentStatus }
-  | { type: 'agent:message'; agentId: string; message: string; targetId?: string }
-  | { type: 'agent:action'; agentId: string; action: string; detail: string }
-  | { type: 'agent:hired'; agent: Agent }
-  | { type: 'board:started'; agentIds: string[] }
-  | { type: 'board:ended' }
-  | { type: 'task:created'; task: Task }
-  | { type: 'task:completed'; taskId: string; output?: Task['output'] };
+// ─── CEO message stream (SSE from POST /api/ceo/message) ────────────────────
 
-// Cost/usage
-export interface SessionCost {
-  sessionId: string;
+export type CeoStreamEvent =
+  | { type: 'token'; agentId: string; token: string }
+  | { type: 'done'; agentId: string }
+  | { type: 'error'; message: string }
+  | { type: 'end' };
+
+// ─── WebSocket events (Colyseus broadcasts) ──────────────────────────────────
+
+export interface AgentStatusPayload {
+  type: 'agent:status';
   agentId: string;
-  model: string;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCostUsd: number;
-  startedAt: string;
-  endedAt?: string;
+  status: AgentStatus;
 }
+
+export interface AgentMessagePayload {
+  type: 'agent:message';
+  agentId: string;
+  message: string;
+  /** 'ceo' | 'pa' | 'all' | an agent id. */
+  targetId?: string;
+  /** true on PA completion reports delivered to the CEO. */
+  isReport?: boolean;
+}
+
+export interface AgentActionPayload {
+  type: 'agent:action';
+  agentId: string;
+  /** Tool name, e.g. 'web_search' or 'write_file'. */
+  action: string;
+  detail: string;
+}
+
+/** Nested `agent` object on agent:hired — NOT the same shape as AgentSummary. */
+export interface HiredAgent {
+  id: string;
+  name: string;
+  role: string;
+  status: 'idle';
+  provider: string;
+  deskPosition: [number, number, number];
+}
+
+export interface AgentHiredPayload {
+  type: 'agent:hired';
+  agent: HiredAgent;
+}
+
+export interface BoardStartedPayload {
+  type: 'board:started';
+  participants: string[];
+  topic: string;
+  seatAssignments: Record<string, { x: number; y: number }>;
+}
+
+export interface BoardEndedPayload {
+  type: 'board:ended';
+  participants: string[];
+  deskReturn: Record<string, { x: number; y: number }>;
+}
+
+/** Task shapes carried on task:* events — camelCase with `task_`-prefixed string ids
+ *  (NOT the REST TaskRecord shape). */
+export interface TaskCreatedPayload {
+  type: 'task:created';
+  task: {
+    id: string;
+    title: string;
+    assignedTo: string;
+    status: 'in-progress';
+    createdAt: string;
+  };
+}
+
+export interface TaskCompletedPayload {
+  type: 'task:completed';
+  task: {
+    id: string;
+    title: string;
+    assignedTo: string;
+    status: 'completed';
+    outputPath: string | null;
+    completedAt: string;
+  };
+}
+
+export interface TaskFailedPayload {
+  type: 'task:failed';
+  task: {
+    id: string;
+    title: string;
+    assignedTo: string;
+    status: 'failed';
+    error: string;
+  };
+}
+
+/** Event name → payload map for every Colyseus broadcast the server emits. */
+export interface OfficeEventMap {
+  'agent:status': AgentStatusPayload;
+  'agent:message': AgentMessagePayload;
+  'agent:action': AgentActionPayload;
+  'agent:hired': AgentHiredPayload;
+  'board:started': BoardStartedPayload;
+  'board:ended': BoardEndedPayload;
+  'task:created': TaskCreatedPayload;
+  'task:completed': TaskCompletedPayload;
+  'task:failed': TaskFailedPayload;
+}
+
+export type OfficeEvent = OfficeEventMap[keyof OfficeEventMap];
