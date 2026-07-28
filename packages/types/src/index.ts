@@ -58,7 +58,8 @@ export interface CostsData {
   thisMonth: number;
   lastMonth: number;
   projected: number;
-  budget: number;
+  /** Configured monthly cap in USD, or null when no cap is set. */
+  budget: number | null;
   byAgent: Array<{ agent: string; cost: number; tokens: number }>;
   byModel: Array<{ model: string; cost: number; tokens: number }>;
   daily: Array<{ date: string; cost: number; input: number; output: number }>;

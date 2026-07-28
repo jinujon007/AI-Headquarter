@@ -1,6 +1,6 @@
 "use client";
 
-import { Dock, TopBar, StatusBar } from "@/components/TenacitOS";
+import { Dock, TopBar, StatusBar } from "@/components/Shell";
 import { OllamaStatusBanner } from "@/components/OllamaStatusBanner";
 
 export default function DashboardLayout({

@@ -14,6 +14,7 @@ export const API = {
   tasks:      `${SERVER_URL}/api/tasks`,
   costs:      `${SERVER_URL}/api/costs`,
   settings:   `${SERVER_URL}/api/settings`,
+  logs:       `${SERVER_URL}/api/logs`,
   system:     `${SERVER_URL}/api/system`,
   output:     (filePath: string) => `${SERVER_URL}/api/output?path=${encodeURIComponent(filePath)}`,
 };

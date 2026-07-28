@@ -80,6 +80,30 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      {/* First-run empty state — a fresh office has zero activity everywhere */}
+      {stats.total === 0 && (
+        <Link
+          href="/office"
+          className="block mb-4 md:mb-6 p-4 rounded-xl transition-all hover:scale-[1.01]"
+          style={{
+            backgroundColor: 'rgba(255, 59, 48, 0.08)',
+            border: '1px solid rgba(255, 59, 48, 0.3)',
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <MessageSquare className="w-5 h-5" style={{ color: 'var(--accent)' }} />
+            <div>
+              <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                Your office is idle — give Alex his first command
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                Open the office and try: &quot;Build me a landing page for a B2B SaaS that helps restaurants manage food waste&quot;
+              </div>
+            </div>
+          </div>
+        </Link>
+      )}
+
       {/* Stats Grid */}
       <div className="mb-4 md:mb-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

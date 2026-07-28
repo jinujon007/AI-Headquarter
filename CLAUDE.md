@@ -157,7 +157,7 @@ Agent zones have semantic meaning:
 - Groq (fast inference)
 - Gemini (Google)
 
-All adapters live in `packages/adapters/`. Switch is per-agent or global from dashboard settings panel.
+All adapters live in `packages/adapters/`. Provider selection is global (per-session): the first configured BYOK key in dashboard Settings is used for all agents; hired agents inherit the session provider. Per-agent overrides are not implemented.
 
 ---
 

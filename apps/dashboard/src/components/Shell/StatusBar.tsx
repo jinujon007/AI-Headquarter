@@ -33,7 +33,8 @@ export function StatusBar() {
       try {
         const health = await fetch("/api/health");
         const body = health.ok ? await health.json() : null;
-        setServerOnline(Boolean(body?.server?.ok ?? health.ok));
+        const serverCheck = body?.checks?.find((c: { name: string }) => c.name === "AIHQ Server");
+        setServerOnline(serverCheck ? serverCheck.status === "up" : false);
       } catch {
         setServerOnline(false);
       }
