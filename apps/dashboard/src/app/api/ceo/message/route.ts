@@ -14,6 +14,9 @@ export async function POST(request: NextRequest) {
     const apiKey = request.headers.get('x-api-key');
     if (provider) forwardHeaders['x-llm-provider'] = provider;
     if (apiKey) forwardHeaders['x-api-key'] = apiKey;
+    // Server auth key — read from env (not from client) so it's never exposed to the browser
+    const serverKey = process.env.AIHQ_SERVER_KEY;
+    if (serverKey) forwardHeaders['x-aihq-key'] = serverKey;
 
     const res = await fetch(API.ceoMessage, {
       method: 'POST',

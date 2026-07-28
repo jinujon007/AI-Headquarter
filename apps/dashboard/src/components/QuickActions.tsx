@@ -4,13 +4,11 @@ import { useState } from "react";
 import {
   RefreshCw,
   Trash2,
-  FileText,
   Key,
   Loader2,
   CheckCircle,
   AlertCircle,
 } from "lucide-react";
-import { ChangePasswordModal } from "./ChangePasswordModal";
 
 interface QuickActionsProps {
   onActionComplete?: () => void;
@@ -22,12 +20,10 @@ interface ActionButton {
   icon: React.ComponentType<{ className?: string }>;
   color: "emerald" | "blue" | "yellow" | "red";
   action: () => Promise<void> | void;
-  placeholder?: boolean;
 }
 
 export function QuickActions({ onActionComplete }: QuickActionsProps) {
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
-  const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
@@ -36,10 +32,6 @@ export function QuickActions({ onActionComplete }: QuickActionsProps) {
   const showNotification = (type: "success" | "error", message: string) => {
     setNotification({ type, message });
     setTimeout(() => setNotification(null), 3000);
-  };
-
-  const handleRestartGateway = async () => {
-    showNotification("success", "Gateway restart command sent (placeholder)");
   };
 
   const handleClearActivityLog = async () => {
@@ -62,41 +54,13 @@ export function QuickActions({ onActionComplete }: QuickActionsProps) {
     }
   };
 
-  const handleViewLogs = async () => {
-    // Placeholder - would open gateway logs
-    showNotification("success", "Opening gateway logs... (placeholder)");
-  };
-
   const actions: ActionButton[] = [
-    {
-      id: "restart",
-      label: "Restart Gateway",
-      icon: RefreshCw,
-      color: "blue",
-      action: handleRestartGateway,
-      placeholder: true,
-    },
     {
       id: "clear_log",
       label: "Clear Activity Log",
       icon: Trash2,
       color: "yellow",
       action: handleClearActivityLog,
-    },
-    {
-      id: "view_logs",
-      label: "View Gateway Logs",
-      icon: FileText,
-      color: "emerald",
-      action: handleViewLogs,
-      placeholder: true,
-    },
-    {
-      id: "change_password",
-      label: "Change Password",
-      icon: Key,
-      color: "red",
-      action: () => setShowPasswordModal(true),
     },
   ];
 
@@ -155,23 +119,16 @@ export function QuickActions({ onActionComplete }: QuickActionsProps) {
                   <Icon className="w-4 h-4" />
                 )}
                 <span className="font-medium">{action.label}</span>
-                {action.placeholder && (
-                  <span className="text-xs opacity-50">(placeholder)</span>
-                )}
               </button>
             );
           })}
         </div>
-      </div>
 
-      <ChangePasswordModal
-        isOpen={showPasswordModal}
-        onClose={() => setShowPasswordModal(false)}
-        onSuccess={() => {
-          showNotification("success", "Password changed successfully");
-          setShowPasswordModal(false);
-        }}
-      />
+        <p className="flex items-center gap-2 mt-4 text-xs text-gray-500">
+          <Key className="w-3 h-3" />
+          Password is set via ADMIN_PASSWORD in your .env file
+        </p>
+      </div>
     </>
   );
 }

@@ -36,9 +36,19 @@ The following are **out of scope**:
 
 ## Security Design Notes
 
-- AI HQ is designed to run **locally only** — the server binds to `localhost:3001` by default
+- AI HQ is **single-tenant** and designed to run **locally** — the server binds to `localhost:3001` by default. One instance per user; do not share a hosted instance.
 - The `output/` directory is sandboxed; agents write only there
-- API keys are stored in browser localStorage only — never sent to AI HQ servers
+- **BYOK API keys:** keys are stored in browser localStorage and sent per-request in the `x-api-key` header to **your own self-hosted server**, which forwards them to the LLM provider. They are never stored or logged server-side, and there is no third-party "AI HQ cloud" — the only server involved is the one you run.
 - The terminal feature has been intentionally removed (see `CLAUDE.md`) due to security risk
 
-When deploying publicly (Railway, etc.), you are responsible for securing the environment with `ADMIN_PASSWORD` and `AUTH_SECRET`.
+### Hardening with `AIHQ_SERVER_KEY`
+
+When `AIHQ_SERVER_KEY` is set in the server environment, the mutating endpoints (`POST /api/ceo/message`, `POST /api/agents/hire`) require a matching `x-aihq-key` header and return HTTP 401 otherwise. The dashboard injects this header server-side from its own environment, so the key is never exposed to the browser. Generate one with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Leave it unset for local development (open mode). **Set it for any deployment reachable beyond localhost.**
+
+When deploying publicly (Railway, etc.), you are responsible for securing the environment with `ADMIN_PASSWORD`, `AUTH_SECRET`, `ALLOWED_ORIGIN`, and `AIHQ_SERVER_KEY`.

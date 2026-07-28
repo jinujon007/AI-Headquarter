@@ -1,65 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, HardDrive, MemoryStick, Activity, Network, Server, ShieldCheck, RotateCw, Wifi, Monitor, Play, Square, X, Loader2, Terminal, ArrowDown, ArrowUp } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Network, Server, ArrowDown, ArrowUp } from "lucide-react";
 
 interface SystemdService {
   name: string;
   status: string;
   description: string;
   backend?: string;
-  uptime?: number | null;
-  restarts?: number;
-  pid?: number | null;
-  mem?: number | null;
-  cpu?: number | null;
-}
-
-interface TailscaleDevice {
-  ip: string;
-  hostname: string;
-  os: string;
-  online: boolean;
-}
-
-interface FirewallRule {
-  port: string;
-  action: string;
-  from: string;
-  comment: string;
 }
 
 interface SystemData {
-  cpu: { usage: number; cores: number[]; loadAvg: number[] };
+  cpu: { usage: number; coreCount: number; loadAvg: number[] };
   ram: { total: number; used: number; free: number; cached: number };
   disk: { total: number; used: number; free: number; percent: number };
   network: { rx: number; tx: number };
   systemd: SystemdService[];
-  tailscale: { active: boolean; ip: string; devices: TailscaleDevice[] };
-  firewall: { active: boolean; rules: FirewallRule[]; ruleCount: number };
-}
-
-interface LogsModal {
-  name: string;
-  backend: string;
-  content: string;
-  loading: boolean;
-}
-
-function formatUptime(ms: number): string {
-  const totalSeconds = Math.floor(ms / 1000);
-  const days = Math.floor(totalSeconds / 86400);
-  const hours = Math.floor((totalSeconds % 86400) / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  if (days > 0) return `${days}d ${hours}h`;
-  if (hours > 0) return `${hours}h ${minutes}m`;
-  return `${minutes}m`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default function SystemMonitorPage() {
@@ -67,9 +23,6 @@ export default function SystemMonitorPage() {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [selectedTab, setSelectedTab] = useState<"hardware" | "services">("hardware");
-  const [actionLoading, setActionLoading] = useState<Record<string, boolean>>({});
-  const [logsModal, setLogsModal] = useState<LogsModal | null>(null);
-  const [toast, setToast] = useState<{ msg: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
     const fetchSystemData = async () => {
@@ -91,52 +44,6 @@ export default function SystemMonitorPage() {
     const interval = setInterval(fetchSystemData, 5000);
     return () => clearInterval(interval);
   }, []);
-
-  const showToast = (msg: string, type: "success" | "error" = "success") => {
-    setToast({ msg, type });
-    setTimeout(() => setToast(null), 3000);
-  };
-
-  const handleServiceAction = async (svc: SystemdService, action: "restart" | "stop" | "start" | "logs") => {
-    const key = `${svc.name}-${action}`;
-    setActionLoading((prev) => ({ ...prev, [key]: true }));
-
-    try {
-      if (action === "logs") {
-        setLogsModal({ name: svc.name, backend: svc.backend || "pm2", content: "", loading: true });
-      }
-
-      const res = await fetch("/api/system/services", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: svc.name, backend: svc.backend || "pm2", action }),
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || "Action failed");
-
-      if (action === "logs") {
-        setLogsModal({ name: svc.name, backend: svc.backend || "pm2", content: data.output, loading: false });
-      } else {
-        showToast(`✅ ${svc.name}: ${action} successful`);
-        // Refresh data after action
-        setTimeout(async () => {
-          const r = await fetch("/api/system/monitor");
-          if (r.ok) setSystemData(await r.json());
-        }, 2000);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Action failed";
-      if (action === "logs") {
-        setLogsModal({ name: svc.name, backend: svc.backend || "pm2", content: `Error: ${msg}`, loading: false });
-      } else {
-        showToast(`❌ ${svc.name}: ${msg}`, "error");
-      }
-    } finally {
-      setActionLoading((prev) => ({ ...prev, [key]: false }));
-    }
-  };
 
   if (loading) {
     return (
@@ -164,26 +71,12 @@ export default function SystemMonitorPage() {
   const ramPercent = (systemData.ram.used / systemData.ram.total) * 100;
   const ramColor = ramPercent < 60 ? "var(--success)" : ramPercent < 85 ? "var(--warning)" : "var(--error)";
   const diskColor = systemData.disk.percent < 60 ? "var(--success)" : systemData.disk.percent < 85 ? "var(--warning)" : "var(--error)";
-
+  // os.loadavg() is all zeros on Windows — hide the row rather than display fake 0.00s
+  const hasLoadAvg = systemData.cpu.loadAvg.some((v) => v > 0);
   const activeServices = systemData.systemd.filter((s) => s.status === "active").length;
 
   return (
     <div className="space-y-6">
-      {/* Toast */}
-      {toast && (
-        <div style={{
-          position: "fixed", top: "1rem", right: "1rem", zIndex: 1000,
-          padding: "0.75rem 1.25rem", borderRadius: "0.75rem",
-          backgroundColor: toast.type === "success" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
-          border: `1px solid ${toast.type === "success" ? "var(--success)" : "var(--error)"}`,
-          color: toast.type === "success" ? "var(--success)" : "var(--error)",
-          fontSize: "0.9rem", fontWeight: 500,
-          boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
-        }}>
-          {toast.msg}
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
@@ -234,7 +127,7 @@ export default function SystemMonitorPage() {
                 </div>
                 <div>
                   <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>CPU</h3>
-                  <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{systemData.cpu.cores.length} cores</p>
+                  <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{systemData.cpu.coreCount} cores</p>
                 </div>
               </div>
               <span className="text-2xl font-bold" style={{ color: cpuColor }}>{systemData.cpu.usage}%</span>
@@ -242,10 +135,12 @@ export default function SystemMonitorPage() {
             <div className="h-2 rounded-full overflow-hidden mb-3" style={{ backgroundColor: "var(--card-elevated)" }}>
               <div className="h-full transition-all duration-500" style={{ width: `${systemData.cpu.usage}%`, backgroundColor: cpuColor }} />
             </div>
-            <div className="flex justify-between text-sm" style={{ color: "var(--text-secondary)" }}>
-              <span>Load Average</span>
-              <span>{(systemData.cpu.loadAvg[0] ?? 0).toFixed(2)} / {(systemData.cpu.loadAvg[1] ?? 0).toFixed(2)} / {(systemData.cpu.loadAvg[2] ?? 0).toFixed(2)}</span>
-            </div>
+            {hasLoadAvg && (
+              <div className="flex justify-between text-sm" style={{ color: "var(--text-secondary)" }}>
+                <span>Load Average</span>
+                <span>{(systemData.cpu.loadAvg[0] ?? 0).toFixed(2)} / {(systemData.cpu.loadAvg[1] ?? 0).toFixed(2)} / {(systemData.cpu.loadAvg[2] ?? 0).toFixed(2)}</span>
+              </div>
+            )}
           </div>
 
           {/* RAM */}
@@ -294,7 +189,7 @@ export default function SystemMonitorPage() {
               </div>
               <div>
                 <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Network</h3>
-                <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Live I/O</p>
+                <p className="text-sm" style={{ color: "var(--text-secondary)" }}>Live I/O (Linux only)</p>
               </div>
             </div>
             <div className="space-y-3">
@@ -312,299 +207,65 @@ export default function SystemMonitorPage() {
                 </div>
                 <span className="font-mono text-sm" style={{ color: "var(--text-primary)" }}>{systemData.network.tx.toFixed(2)} MB/s</span>
               </div>
-              {/* Mini bar viz */}
-              <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.75rem" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>RX</div>
-                  <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
-                    <div className="h-full" style={{ width: `${Math.min(systemData.network.rx * 10, 100)}%`, backgroundColor: "var(--success)" }} />
-                  </div>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>TX</div>
-                  <div className="h-1 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
-                    <div className="h-full" style={{ width: `${Math.min(systemData.network.tx * 10, 100)}%`, backgroundColor: "var(--accent)" }} />
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Services Tab */}
+      {/* Services Tab — read-only health of the two processes AI HQ actually depends on */}
       {selectedTab === "services" && (
-        <div className="space-y-6">
-          {/* Systemd + PM2 Services */}
-          <div className="p-6 rounded-xl" style={{ backgroundColor: "var(--card)", border: "1px solid var(--border)" }}>
-            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
-              <Server className="w-5 h-5" style={{ color: "var(--accent)" }} />
-              Services ({activeServices}/{systemData.systemd.length} active)
-            </h3>
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr style={{ borderBottom: "1px solid var(--border)" }}>
-                    <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Service</th>
-                    <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Description</th>
-                    <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Status</th>
-                    <th className="text-right py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {systemData.systemd.map((svc) => {
-                    const isActionable = svc.backend === "pm2" || svc.backend === "systemd";
-                    const restartKey = `${svc.name}-restart`;
-                    const stopKey = `${svc.name}-stop`;
-                    const logsKey = `${svc.name}-logs`;
-
-                    return (
-                      <tr key={svc.name} style={{ borderBottom: "1px solid var(--border)" }}>
-                        <td className="py-3 px-3">
-                          <span className="font-mono font-medium" style={{ color: "var(--text-primary)" }}>{svc.name}</span>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex flex-col gap-0.5">
-                            <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{svc.description || "—"}</span>
-                            {svc.uptime != null && svc.status === "active" && (
-                              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                                up {formatUptime(svc.uptime)}
-                                {svc.restarts != null && svc.restarts > 0 && ` · ${svc.restarts} restarts`}
-                                {svc.mem != null && ` · ${formatBytes(svc.mem)}`}
-                                {svc.cpu != null && ` · ${svc.cpu.toFixed(1)}% CPU`}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <div
-                              className="w-2 h-2 rounded-full flex-shrink-0"
-                              style={{
-                                backgroundColor:
-                                  svc.status === "active" ? "var(--success)" :
-                                  svc.status === "not_deployed" ? "var(--info, #3b82f6)" :
-                                  svc.status === "failed" ? "var(--error)" : "var(--text-muted)",
-                              }}
-                            />
-                            <span
-                              className="px-2 py-1 rounded text-xs font-medium"
-                              style={{
-                                backgroundColor:
-                                  svc.status === "active" ? "var(--success-bg)" :
-                                  svc.status === "not_deployed" ? "rgba(59,130,246,0.12)" :
-                                  svc.status === "failed" ? "var(--error-bg)" : "var(--card-elevated)",
-                                color:
-                                  svc.status === "active" ? "var(--success)" :
-                                  svc.status === "not_deployed" ? "#60a5fa" :
-                                  svc.status === "failed" ? "var(--error)" : "var(--text-muted)",
-                              }}
-                            >
-                              {svc.status === "not_deployed" ? "not deployed" : svc.status}
-                            </span>
-                            {svc.backend && svc.backend !== "none" && (
-                              <span
-                                className="px-1.5 py-0.5 rounded text-xs"
-                                style={{ backgroundColor: "var(--card-elevated)", color: "var(--text-muted)", fontSize: "10px" }}
-                              >
-                                {svc.backend}
-                              </span>
-                            )}
-                          </div>
-                        </td>
-                        <td className="py-3 px-3">
-                          <div className="flex justify-end gap-1">
-                            {isActionable && (
-                              <>
-                                {/* Restart */}
-                                <button
-                                  onClick={() => handleServiceAction(svc, "restart")}
-                                  disabled={actionLoading[restartKey]}
-                                  className="p-1.5 rounded transition-colors"
-                                  title="Restart"
-                                  style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
-                                >
-                                  {actionLoading[restartKey] ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <RotateCw className="w-4 h-4" />
-                                  )}
-                                </button>
-
-                                {/* Stop/Start */}
-                                <button
-                                  onClick={() => handleServiceAction(svc, svc.status === "active" ? "stop" : "start")}
-                                  disabled={actionLoading[stopKey] || svc.status === "not_deployed"}
-                                  className="p-1.5 rounded transition-colors"
-                                  title={svc.status === "active" ? "Stop" : "Start"}
-                                  style={{ color: svc.status === "active" ? "var(--error)" : "var(--success)", background: "none", border: "none", cursor: "pointer" }}
-                                >
-                                  {svc.status === "active" ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                                </button>
-
-                                {/* Logs */}
-                                <button
-                                  onClick={() => handleServiceAction(svc, "logs")}
-                                  disabled={actionLoading[logsKey]}
-                                  className="p-1.5 rounded transition-colors"
-                                  title="View Logs"
-                                  style={{ color: "var(--text-muted)", background: "none", border: "none", cursor: "pointer" }}
-                                >
-                                  {actionLoading[logsKey] ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Terminal className="w-4 h-4" />
-                                  )}
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* VPN & Firewall */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Tailscale VPN */}
-            <div className="p-6 rounded-xl" style={{ backgroundColor: "var(--card)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 rounded-lg" style={{ backgroundColor: "var(--card-elevated)" }}>
-                  <Wifi className="w-5 h-5" style={{ color: systemData.tailscale.active ? "var(--success)" : "var(--error)" }} />
-                </div>
-                <div>
-                  <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Tailscale VPN</h3>
-                  <p className="text-sm" style={{ color: systemData.tailscale.active ? "var(--success)" : "var(--error)" }}>
-                    {systemData.tailscale.active ? "Active" : "Inactive"}
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-2 mb-4">
-                <div className="flex justify-between text-sm">
-                  <span style={{ color: "var(--text-secondary)" }}>This server</span>
-                  <span className="font-mono" style={{ color: "var(--text-primary)" }}>{systemData.tailscale.ip}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span style={{ color: "var(--text-secondary)" }}>Devices connected</span>
-                  <span style={{ color: "var(--text-primary)" }}>{systemData.tailscale.devices.length}</span>
-                </div>
-              </div>
-              {systemData.tailscale.devices.length > 0 && (
-                <div className="space-y-2 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
-                  {systemData.tailscale.devices.map((dev, i) => (
-                    <div key={i} className="flex items-center justify-between text-xs">
+        <div className="p-6 rounded-xl" style={{ backgroundColor: "var(--card)", border: "1px solid var(--border)" }}>
+          <h3 className="text-lg font-semibold mb-4 flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
+            <Server className="w-5 h-5" style={{ color: "var(--accent)" }} />
+            Services ({activeServices}/{systemData.systemd.length} active)
+          </h3>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border)" }}>
+                  <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Service</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Description</th>
+                  <th className="text-left py-2 px-3 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {systemData.systemd.map((svc) => (
+                  <tr key={svc.name} style={{ borderBottom: "1px solid var(--border)" }}>
+                    <td className="py-3 px-3">
+                      <span className="font-mono font-medium" style={{ color: "var(--text-primary)" }}>{svc.name}</span>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="text-sm" style={{ color: "var(--text-secondary)" }}>{svc.description || "—"}</span>
+                    </td>
+                    <td className="py-3 px-3">
                       <div className="flex items-center gap-2">
-                        <Monitor className="w-3 h-3" style={{ color: "var(--text-muted)" }} />
-                        <span className="font-mono" style={{ color: "var(--text-secondary)" }}>{dev.hostname}</span>
-                        <span style={{ color: "var(--text-muted)" }}>({dev.os})</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono" style={{ color: "var(--text-muted)" }}>{dev.ip}</span>
-                        <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: dev.online ? "var(--success)" : "var(--text-muted)" }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Firewall */}
-            <div className="p-6 rounded-xl" style={{ backgroundColor: "var(--card)", border: "1px solid var(--border)" }}>
-              <div className="flex items-center gap-3 mb-4">
-                <div className="p-2 rounded-lg" style={{ backgroundColor: "var(--card-elevated)" }}>
-                  <ShieldCheck className="w-5 h-5" style={{ color: systemData.firewall.active ? "var(--success)" : "var(--error)" }} />
-                </div>
-                <div>
-                  <h3 className="font-semibold" style={{ color: "var(--text-primary)" }}>Firewall (UFW)</h3>
-                  <p className="text-sm" style={{ color: systemData.firewall.active ? "var(--success)" : "var(--error)" }}>
-                    {systemData.firewall.active ? "Active" : "Inactive"}
-                  </p>
-                </div>
-              </div>
-              <div className="space-y-2">
-                {systemData.firewall.rules.map((rule, i) => (
-                  <div
-                    key={i}
-                    className="flex items-start justify-between text-xs py-1.5"
-                    style={{ borderBottom: i < systemData.firewall.rules.length - 1 ? "1px solid var(--border)" : "none" }}
-                  >
-                    <div className="flex flex-col gap-0.5">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono font-semibold" style={{ color: "var(--text-primary)" }}>{rule.port}</span>
-                        <span className="px-1.5 py-0.5 rounded text-xs" style={{ backgroundColor: "var(--success-bg)", color: "var(--success)", fontSize: "9px" }}>
-                          {rule.action}
+                        <div
+                          className="w-2 h-2 rounded-full flex-shrink-0"
+                          style={{
+                            backgroundColor:
+                              svc.status === "active" ? "var(--success)" :
+                              svc.status === "failed" ? "var(--error)" : "var(--text-muted)",
+                          }}
+                        />
+                        <span
+                          className="px-2 py-1 rounded text-xs font-medium"
+                          style={{
+                            backgroundColor:
+                              svc.status === "active" ? "var(--success-bg)" :
+                              svc.status === "failed" ? "var(--error-bg)" : "var(--card-elevated)",
+                            color:
+                              svc.status === "active" ? "var(--success)" :
+                              svc.status === "failed" ? "var(--error)" : "var(--text-muted)",
+                          }}
+                        >
+                          {svc.status}
                         </span>
                       </div>
-                      {rule.comment && <span style={{ color: "var(--text-muted)", fontSize: "10px" }}>{rule.comment}</span>}
-                    </div>
-                    <span className="font-mono text-right" style={{ color: "var(--text-secondary)", maxWidth: "120px", wordBreak: "break-all" }}>
-                      {rule.from}
-                    </span>
-                  </div>
+                    </td>
+                  </tr>
                 ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Logs Modal */}
-      {logsModal && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 1000,
-          backgroundColor: "rgba(0,0,0,0.85)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          padding: "1rem",
-        }}>
-          <div style={{
-            width: "95vw", maxWidth: "900px", height: "80vh",
-            backgroundColor: "#0d1117",
-            borderRadius: "1rem", border: "1px solid var(--border)",
-            display: "flex", flexDirection: "column",
-            overflow: "hidden",
-          }}>
-            {/* Log header */}
-            <div style={{
-              display: "flex", alignItems: "center", gap: "0.75rem",
-              padding: "0.875rem 1rem",
-              borderBottom: "1px solid var(--border)",
-              flexShrink: 0,
-            }}>
-              <Terminal className="w-4 h-4" style={{ color: "var(--accent)" }} />
-              <span style={{ color: "#c9d1d9", fontFamily: "monospace", fontSize: "0.9rem" }}>
-                {logsModal.name} logs
-              </span>
-              <span style={{ fontSize: "0.75rem", color: "#8b949e", marginLeft: "0.5rem" }}>
-                ({logsModal.backend})
-              </span>
-              <button
-                onClick={() => setLogsModal(null)}
-                style={{ marginLeft: "auto", padding: "0.375rem", borderRadius: "0.375rem", background: "none", border: "none", cursor: "pointer", color: "#8b949e" }}
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Log content */}
-            <div style={{ flex: 1, overflow: "auto", padding: "1rem" }}>
-              {logsModal.loading ? (
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
-                  <Loader2 className="w-8 h-8 animate-spin" style={{ color: "var(--accent)" }} />
-                </div>
-              ) : (
-                <pre style={{
-                  fontFamily: "monospace", fontSize: "0.8rem",
-                  color: "#c9d1d9", whiteSpace: "pre-wrap", wordBreak: "break-all",
-                  lineHeight: 1.6,
-                }}>
-                  {logsModal.content || "No log output"}
-                </pre>
-              )}
-            </div>
+              </tbody>
+            </table>
           </div>
         </div>
       )}

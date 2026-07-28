@@ -71,8 +71,22 @@ export async function GET() {
   try {
     const res = await fetch(API.agents, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
     const data = await res.json();
-    // Server returns Agent[] — wrap for dashboard compatibility
-    const agents = Array.isArray(data) ? data : (data.agents || BUILTIN_AGENTS);
+    // Server returns Agent[] — merge visual metadata (emoji/color) from the
+    // builtin list and map live agent state to the home page's online/offline.
+    const serverAgents = Array.isArray(data) ? data : (data.agents || []);
+    if (serverAgents.length === 0) return NextResponse.json({ agents: BUILTIN_AGENTS });
+    const agents = serverAgents.map((a: Record<string, unknown>) => {
+      const visual = BUILTIN_AGENTS.find(b => b.id === a.id);
+      return {
+        emoji: visual?.emoji || "🧑‍💼",
+        color: visual?.color || "#8899aa",
+        workspace: "output/",
+        ...a,
+        // A reachable server means the agent process is live regardless of its work state
+        status: "online",
+        agentStatus: a.status,
+      };
+    });
     return NextResponse.json({ agents });
   } catch {
     return NextResponse.json({ agents: BUILTIN_AGENTS });

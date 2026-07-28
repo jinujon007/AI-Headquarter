@@ -1,100 +1,63 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Terminal, Play, Square, Trash2, Download, Circle, Server } from "lucide-react";
+import { Terminal, Play, Square, Trash2, Download, Circle } from "lucide-react";
 
 interface LogLine {
-  line: string;
   ts: string;
-  id: number;
+  level: string;
+  line: string;
 }
 
-const SERVICES = [
-  { name: "aihq-server", backend: "systemd", label: "AIHQ Server" },
-  { name: "aihq-dashboard", backend: "systemd", label: "Dashboard" },
-];
-
-function getLineColor(line: string): string {
+function getLineColor(level: string, line: string): string {
+  if (level === "error") return "#f87171";
+  if (level === "warn") return "#fbbf24";
   const lower = line.toLowerCase();
-  if (lower.includes("error") || lower.includes("err]") || lower.includes("exception")) return "#f87171";
-  if (lower.includes("warn") || lower.includes("warning")) return "#fbbf24";
-  if (lower.includes("info") || lower.includes("[info]")) return "#60a5fa";
-  if (lower.includes("success") || lower.includes("✓") || lower.includes("ready")) return "#4ade80";
-  if (lower.startsWith("[stream]")) return "#a78bfa";
+  if (lower.includes("error") || lower.includes("exception")) return "#f87171";
+  if (lower.includes("warn")) return "#fbbf24";
+  if (lower.includes("ready") || lower.includes("initialized") || lower.includes("✓")) return "#4ade80";
   return "#c9d1d9";
 }
 
+// Server log viewer — polls the server's in-memory ring buffer (last 500 lines)
+// every 2 seconds. No pm2/systemd assumptions; works on every install.
 export default function LogsPage() {
-  const [selectedService, setSelectedService] = useState(SERVICES[0]);
   const [lines, setLines] = useState<LogLine[]>([]);
-  const [streaming, setStreaming] = useState(false);
+  const [polling, setPolling] = useState(true);
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
-  const esRef = useRef<EventSource | null>(null);
-  const idRef = useRef(0);
 
-  const startStream = () => {
-    if (esRef.current) {
-      esRef.current.close();
-    }
-
-    setLines([]);
-    setStreaming(true);
-
-    const es = new EventSource(
-      `/api/logs/stream?service=${encodeURIComponent(selectedService.name)}&backend=${encodeURIComponent(selectedService.backend)}`
-    );
-
-    es.onmessage = (e) => {
+  useEffect(() => {
+    if (!polling) return;
+    let alive = true;
+    const fetchLogs = async () => {
       try {
-        const data = JSON.parse(e.data);
-        setLines((prev) => {
-          const newLine = { line: data.line, ts: data.ts, id: ++idRef.current };
-          const updated = [...prev, newLine];
-          // Keep max 2000 lines
-          return updated.length > 2000 ? updated.slice(-2000) : updated;
-        });
-      } catch {}
+        const res = await fetch("/api/logs");
+        if (res.ok && alive) {
+          const data = await res.json();
+          if (Array.isArray(data)) setLines(data);
+        }
+      } catch { /* server offline — keep last known lines */ }
     };
+    fetchLogs();
+    const interval = setInterval(fetchLogs, 2000);
+    return () => { alive = false; clearInterval(interval); };
+  }, [polling]);
 
-    es.onerror = () => {
-      setStreaming(false);
-      es.close();
-    };
-
-    esRef.current = es;
-  };
-
-  const stopStream = () => {
-    esRef.current?.close();
-    esRef.current = null;
-    setStreaming(false);
-  };
-
-  // Auto-scroll
   useEffect(() => {
     if (autoScroll && logRef.current) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [lines, autoScroll]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      esRef.current?.close();
-    };
-  }, []);
-
-  const handleClear = () => setLines([]);
-
   const handleDownload = () => {
-    const text = lines.map((l) => `[${l.ts}] ${l.line}`).join("\n");
+    const text = lines.map((l) => `[${l.ts}] [${l.level}] ${l.line}`).join("\n");
     const blob = new Blob([text], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${selectedService.name}-logs.txt`;
+    a.download = "aihq-server-logs.txt";
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -108,10 +71,10 @@ export default function LogsPage() {
       {/* Header */}
       <div style={{ padding: "1.5rem 1.5rem 1rem" }}>
         <h1 style={{ fontFamily: "var(--font-heading)", fontSize: "1.75rem", fontWeight: 700, color: "var(--text-primary)", marginBottom: "0.25rem" }}>
-          Log Viewer
+          Server Logs
         </h1>
         <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
-          Real-time log streaming from services
+          Last 500 console lines from the agent server, refreshed every 2s
         </p>
       </div>
 
@@ -122,31 +85,7 @@ export default function LogsPage() {
         borderBottom: "1px solid var(--border)",
         backgroundColor: "var(--card)",
       }}>
-        {/* Service selector */}
-        <div style={{ display: "flex", gap: "0.375rem", flexWrap: "wrap" }}>
-          {SERVICES.map((svc) => (
-            <button
-              key={svc.name}
-              onClick={() => { setSelectedService(svc); stopStream(); setLines([]); }}
-              style={{
-                padding: "0.375rem 0.875rem",
-                borderRadius: "9999px",
-                fontSize: "0.8rem",
-                fontWeight: 500,
-                border: "1px solid",
-                cursor: "pointer",
-                backgroundColor: selectedService.name === svc.name ? "rgba(255,59,48,0.15)" : "var(--card-elevated)",
-                color: selectedService.name === svc.name ? "var(--accent)" : "var(--text-secondary)",
-                borderColor: selectedService.name === svc.name ? "rgba(255,59,48,0.4)" : "var(--border)",
-              }}
-            >
-              {svc.label}
-            </button>
-          ))}
-        </div>
-
         <div style={{ marginLeft: "auto", display: "flex", gap: "0.5rem", alignItems: "center" }}>
-          {/* Filter */}
           <input
             placeholder="Filter logs..."
             value={filter}
@@ -163,7 +102,6 @@ export default function LogsPage() {
             }}
           />
 
-          {/* Auto-scroll toggle */}
           <button
             onClick={() => setAutoScroll(!autoScroll)}
             title="Auto-scroll"
@@ -178,45 +116,27 @@ export default function LogsPage() {
             ↓ Auto
           </button>
 
-          {/* Clear */}
-          <button onClick={handleClear} title="Clear"
-            style={{ padding: "0.375rem 0.625rem", borderRadius: "0.5rem", background: "var(--card-elevated)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
-            <Trash2 className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Download */}
           <button onClick={handleDownload} title="Download logs"
             style={{ padding: "0.375rem 0.625rem", borderRadius: "0.5rem", background: "var(--card-elevated)", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
             <Download className="w-3.5 h-3.5" />
           </button>
 
-          {/* Start/Stop stream */}
           <button
-            onClick={streaming ? stopStream : startStream}
+            onClick={() => setPolling(!polling)}
             style={{
               display: "flex", alignItems: "center", gap: "0.5rem",
               padding: "0.5rem 1rem",
               borderRadius: "0.5rem",
-              backgroundColor: streaming ? "rgba(239,68,68,0.15)" : "rgba(74,222,128,0.15)",
-              color: streaming ? "#f87171" : "#4ade80",
+              backgroundColor: polling ? "rgba(239,68,68,0.15)" : "rgba(74,222,128,0.15)",
+              color: polling ? "#f87171" : "#4ade80",
               border: "1px solid",
-              borderColor: streaming ? "rgba(239,68,68,0.3)" : "rgba(74,222,128,0.3)",
+              borderColor: polling ? "rgba(239,68,68,0.3)" : "rgba(74,222,128,0.3)",
               cursor: "pointer",
               fontWeight: 600,
               fontSize: "0.875rem",
             }}
           >
-            {streaming ? (
-              <>
-                <Square className="w-3.5 h-3.5" />
-                Stop
-              </>
-            ) : (
-              <>
-                <Play className="w-3.5 h-3.5" />
-                Stream
-              </>
-            )}
+            {polling ? (<><Square className="w-3.5 h-3.5" />Pause</>) : (<><Play className="w-3.5 h-3.5" />Resume</>)}
           </button>
         </div>
       </div>
@@ -232,15 +152,13 @@ export default function LogsPage() {
         <div style={{ display: "flex", alignItems: "center", gap: "0.375rem" }}>
           <Circle
             className="w-2 h-2"
-            style={{ fill: streaming ? "#4ade80" : "#6b7280", color: streaming ? "#4ade80" : "#6b7280" }}
+            style={{ fill: polling ? "#4ade80" : "#6b7280", color: polling ? "#4ade80" : "#6b7280" }}
           />
-          <span style={{ color: streaming ? "#4ade80" : "#6b7280" }}>
-            {streaming ? "LIVE" : "STOPPED"}
+          <span style={{ color: polling ? "#4ade80" : "#6b7280" }}>
+            {polling ? "LIVE" : "PAUSED"}
           </span>
         </div>
-        <span style={{ color: "#8b949e" }}>
-          {selectedService.label} · {selectedService.backend}
-        </span>
+        <span style={{ color: "#8b949e" }}>aihq-server · ring buffer</span>
         <span style={{ color: "#8b949e", marginLeft: "auto" }}>
           {filteredLines.length} lines{filter && ` (filtered from ${lines.length})`}
         </span>
@@ -268,15 +186,15 @@ export default function LogsPage() {
         {filteredLines.length === 0 ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", color: "#8b949e" }}>
             <Terminal className="w-12 h-12 mb-3 opacity-30" />
-            <p>{streaming ? "Waiting for logs..." : "Click 'Stream' to start live log viewer"}</p>
+            <p>{polling ? "No log lines yet — is the server running?" : "Polling paused"}</p>
           </div>
         ) : (
-          filteredLines.map((l) => (
-            <div key={l.id} style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
+          filteredLines.map((l, i) => (
+            <div key={`${l.ts}-${i}`} style={{ display: "flex", gap: "1rem", alignItems: "flex-start" }}>
               <span style={{ color: "#484f58", flexShrink: 0, fontSize: "0.7rem", paddingTop: "0.1rem" }}>
                 {new Date(l.ts).toLocaleTimeString()}
               </span>
-              <span style={{ color: getLineColor(l.line), wordBreak: "break-all" }}>
+              <span style={{ color: getLineColor(l.level, l.line), wordBreak: "break-all" }}>
                 {l.line}
               </span>
             </div>

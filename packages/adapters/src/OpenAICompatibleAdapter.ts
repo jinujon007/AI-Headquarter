@@ -22,7 +22,7 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
             }
         })) : undefined;
 
-        const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${this.apiKey}`,
@@ -32,12 +32,14 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
                 model: request.model,
                 messages: request.messages,
                 tools,
-                temperature: request.temperature
+                temperature: request.temperature,
+                ...(request.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {})
             })
         });
 
         if (!response.ok) {
-            throw new Error(`OpenAI Error: ${response.statusText}`);
+            const errBody = await response.text().catch(() => response.statusText);
+            throw new Error(`${this.provider} Error ${response.status}: ${errBody}`);
         }
 
         const data = await response.json();
@@ -70,7 +72,7 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
         onDone: () => void;
         temperature?: number;
     }): Promise<string> {
-        const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        const response = await fetch(`${this.baseUrl}/chat/completions`, {
             method: 'POST',
             headers: {
                 'Authorization': `Bearer ${this.apiKey}`,
@@ -85,14 +87,18 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
         });
 
         if (!response.ok || !response.body) {
+            const errBody = !response.ok ? await response.text().catch(() => '') : '';
             options.onDone();
-            throw new Error(`OpenAI stream failed: ${response.status}`);
+            throw new Error(`${this.provider} stream ${response.status}${errBody ? ': ' + errBody : ''}`);
         }
 
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let fullText = '';
         let buffer = '';
+
+        let doneCalled = false;
+        const callDone = () => { if (!doneCalled) { doneCalled = true; options.onDone(); } };
 
         try {
             while (true) {
@@ -107,7 +113,7 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
                     if (!line.startsWith('data: ')) continue;
                     const payload = line.slice(6).trim();
                     if (payload === '[DONE]') {
-                        options.onDone();
+                        callDone();
                         return fullText;
                     }
                     try {
@@ -118,7 +124,7 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
                             options.onToken(content);
                         }
                         if (data.choices?.[0]?.finish_reason === 'stop') {
-                            options.onDone();
+                            callDone();
                             return fullText;
                         }
                     } catch {
@@ -127,7 +133,7 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
                 }
             }
         } finally {
-            options.onDone();
+            callDone();
         }
 
         return fullText;

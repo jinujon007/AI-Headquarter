@@ -1,6 +1,7 @@
 "use client";
 
-import { Dock, TopBar, StatusBar } from "@/components/TenacitOS";
+import { Dock, TopBar, StatusBar } from "@/components/Shell";
+import { OllamaStatusBanner } from "@/components/OllamaStatusBanner";
 
 export default function DashboardLayout({
   children,
@@ -11,6 +12,7 @@ export default function DashboardLayout({
     <div className="tenacios-shell" style={{ minHeight: "100vh" }}>
       <Dock />
       <TopBar />
+      <OllamaStatusBanner />
       
       <main
         style={{

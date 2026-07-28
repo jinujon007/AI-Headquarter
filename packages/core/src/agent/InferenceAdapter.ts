@@ -16,6 +16,8 @@ export interface CompletionRequest {
     tools?: ToolDefinition[];
     temperature?: number;
     maxTokens?: number;
+    /** Ask the provider to return strictly valid JSON (Ollama format:json, OpenAI response_format). */
+    responseFormat?: 'json';
 }
 
 export interface CompletionResponse {

@@ -26,18 +26,12 @@ export class ToolExecutor {
                 return Promise.resolve(this.executeCode(params.code, params.language || 'javascript'));
             case 'web_search':
                 return this.webSearch(params.query);
-        case 'write_note':
-            return this.writeNote(params.content, { 
-                agentId: params?.agentId, 
-                filename: params?.filename, 
-                extension: params?.extension 
-            });
-        case 'write_file':
-            return this.writeNote(params.content, { 
-                agentId: params?.agentId, 
-                filename: params?.filename, 
-                extension: params?.extension 
-            });
+            case 'write_file':
+                return this.writeNote(params.content, {
+                    agentId: params?.agentId,
+                    filename: params?.filename,
+                    extension: params?.extension,
+                });
             case 'read_file':
                 return this.readFile(params.path);
             default:
@@ -46,8 +40,11 @@ export class ToolExecutor {
     }
 
     private executeCode(code: string, language: string): ToolResult {
+        if (language === 'python' || language === 'py') {
+            return this.executePython(code);
+        }
         if (language !== 'javascript' && language !== 'js') {
-            return { success: false, output: '', error: 'Only JavaScript is supported for sandboxed execution.' };
+            return { success: false, output: '', error: 'Supported languages: javascript, python.' };
         }
 
         const output: string[] = [];
@@ -71,6 +68,24 @@ export class ToolExecutor {
                 return { success: false, output: output.join('\n'), error: 'Execution timed out (5s limit).' };
             }
             return { success: false, output: output.join('\n'), error: (e as Error).message };
+        }
+    }
+
+    private executePython(code: string): ToolResult {
+        const { execFileSync } = require('child_process');
+        try {
+            const output = execFileSync('python3', ['-c', code], {
+                timeout: 5000,
+                maxBuffer: 100 * 1024,
+                env: { PATH: process.env.PATH },
+            });
+            return { success: true, output: output.toString().trim() };
+        } catch (e: any) {
+            const stderr = e.stderr?.toString() || '';
+            const stdout = e.stdout?.toString() || '';
+            if (e.code === 'ETIMEDOUT') return { success: false, output: '', error: 'Python execution timed out (5s).' };
+            if (e.code === 'ENOENT') return { success: false, output: '', error: 'python3 not found on this system.' };
+            return { success: false, output: stdout, error: stderr || e.message };
         }
     }
 
@@ -122,26 +137,32 @@ export class ToolExecutor {
         }
     }
 
-    private async writeNote(content: string, params?: { agentId?: string; filename?: string; extension?: string }): Promise<ToolResult> {
-        try {
-            const { writeFile, mkdir } = await import('fs/promises');
-            const path = await import('path');
-            const agentId = params?.agentId || 'agent';
-            const slug = (params?.filename || content.slice(0, 30))
-                .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-            const dir = path.join(process.cwd(), 'output', agentId);
-            await mkdir(dir, { recursive: true });
-            const ext = params.extension || 'md';
-            const filename = `${timestamp}-${slug || 'note'}.${ext}`;
-            const filepath = path.join(dir, filename);
-            await writeFile(filepath, content, 'utf-8');
-            const relativePath = path.join('output', agentId, filename);
-            return { success: true, output: `File written: ${relativePath}` };
-        } catch (e: any) {
-            return { success: false, output: '', error: e.message };
-        }
-    }
+     private async writeNote(content: string, params?: { agentId?: string; filename?: string; extension?: string }): Promise<ToolResult> {
+         try {
+             const { writeFile, mkdir } = await import('fs/promises');
+             const path = await import('path');
+             const agentId = params?.agentId || 'agent';
+             const slug = (params?.filename || content.slice(0, 30))
+                 .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+             const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+             const allowedExtensions = ['md', 'txt', 'html', 'js', 'json', 'csv'];
+             const requestedExt = (params?.extension || 'md').toLowerCase();
+             const ext = allowedExtensions.includes(requestedExt) ? requestedExt : 'md';
+             const outputRoot = path.resolve(process.cwd(), 'output');
+             const filename = `${timestamp}-${slug || 'note'}.${ext}`;
+             const filepath = path.resolve(outputRoot, agentId, filename);
+             // Enforce that resolved path is strictly inside output/ (agentId is LLM-controlled)
+             if (!filepath.startsWith(outputRoot + path.sep)) {
+                 return { success: false, output: '', error: 'Access denied: path must be within output/' };
+             }
+             await mkdir(path.dirname(filepath), { recursive: true });
+             await writeFile(filepath, content, 'utf-8');
+             const relativePath = path.relative(process.cwd(), filepath);
+             return { success: true, output: `File written: ${relativePath}` };
+         } catch (e: any) {
+             return { success: false, output: '', error: e.message };
+         }
+     }
 
     private async readFile(filePath: string): Promise<ToolResult> {
         const pathModule = await import('path');

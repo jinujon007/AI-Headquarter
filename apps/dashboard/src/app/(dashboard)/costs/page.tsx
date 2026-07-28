@@ -10,19 +10,66 @@ interface CostData {
   thisMonth: number;
   lastMonth: number;
   projected: number;
-  budget: number;
+  budget: number | null;
   byAgent: Array<{ agent: string; cost: number; tokens: number }>;
   byModel: Array<{ model: string; cost: number; tokens: number }>;
   daily: Array<{ date: string; cost: number; input: number; output: number }>;
   hourly: Array<{ hour: string; cost: number }>;
 }
 
+function transformCostsData(serverData: any): CostData {
+  if (!serverData || Array.isArray(serverData)) {
+    return {
+      today: 0,
+      yesterday: 0,
+      thisMonth: 0,
+      lastMonth: 0,
+      projected: 0,
+      budget: null,
+      byAgent: [],
+      byModel: [],
+      daily: [],
+      hourly: []
+    };
+  }
+  return {
+    today: serverData.today || 0,
+    yesterday: serverData.yesterday || 0,
+    thisMonth: serverData.thisMonth || 0,
+    lastMonth: serverData.lastMonth || 0,
+    projected: serverData.projected || 0,
+    budget: typeof serverData.budget === 'number' ? serverData.budget : null,
+    byAgent: (serverData.byAgent || []).map((a: any) => ({
+      agent: a.agent || a.agent_id || 'unknown',
+      cost: a.cost || 0,
+      tokens: a.tokens || 0
+    })),
+    byModel: (serverData.byModel || []).map((m: any) => ({
+      model: m.model || 'unknown',
+      cost: m.cost || 0,
+      tokens: m.tokens || 0
+    })),
+    daily: (serverData.daily || []).map((d: any) => ({
+      date: d.date || '',
+      cost: d.cost || 0,
+      input: d.input || 0,
+      output: d.output || 0
+    })),
+    hourly: serverData.hourly || []
+  };
+}
+
 const COLORS = ['#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#00C7BE', '#30B0C7', '#32ADE6', '#007AFF', '#5856D6', '#AF52DE', '#FF2D55'];
 
+// Keep in sync with MODEL_PRICING in apps/server/src/memory/MemoryStore.ts —
+// that table is what actually computes the costs shown on this page.
 const MODEL_PRICES = {
-  "opus-4.6": { input: 15, output: 75, cacheRead: 1.5, cacheWrite: 18.75 },
-  "sonnet-4.5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  "haiku-3.5": { input: 0.8, output: 4, cacheRead: 0.08, cacheWrite: 1.0 },
+  "ollama (local models)": { input: 0, output: 0 },
+  "claude-*": { input: 3, output: 15 },
+  "gpt-4o": { input: 2.5, output: 10 },
+  "gpt-4o-mini": { input: 0.15, output: 0.6 },
+  "gpt-4.1": { input: 2, output: 8 },
+  "gemini-*": { input: 0.1, output: 0.4 },
 };
 
 export default function CostsPage() {
@@ -41,7 +88,7 @@ export default function CostsPage() {
       const res = await fetch(`/api/costs?timeframe=${timeframe}`);
       if (res.ok) {
         const data = await res.json();
-        setCostData(data);
+        setCostData(transformCostsData(data));
       }
     } catch (error) {
       console.error("Failed to fetch cost data:", error);
@@ -72,10 +119,11 @@ export default function CostsPage() {
     );
   }
 
-  const budgetPercent = (costData.thisMonth / costData.budget) * 100;
+  const budgetPercent = costData.budget != null && costData.budget > 0 ? (costData.thisMonth / costData.budget) * 100 : 0;
   const budgetColor = budgetPercent < 60 ? "var(--success)" : budgetPercent < 85 ? "var(--warning)" : "var(--error)";
-  const todayChange = ((costData.today - costData.yesterday) / costData.yesterday) * 100;
-  const monthChange = ((costData.thisMonth - costData.lastMonth) / costData.lastMonth) * 100;
+  // Guard divide-by-zero: with no spend yesterday/last month the % change is meaningless, show 0
+  const todayChange = costData.yesterday > 0 ? ((costData.today - costData.yesterday) / costData.yesterday) * 100 : 0;
+  const monthChange = costData.lastMonth > 0 ? ((costData.thisMonth - costData.lastMonth) / costData.lastMonth) * 100 : 0;
 
   return (
     <div className="space-y-6">
@@ -193,18 +241,29 @@ export default function CostsPage() {
               <AlertTriangle className="w-4 h-4" style={{ color: "var(--error)" }} />
             )}
           </div>
-          <div className="text-3xl font-bold" style={{ color: budgetColor }}>
-            {budgetPercent.toFixed(0)}%
-          </div>
-          <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
-            <div
-              className="h-full transition-all duration-500"
-              style={{ width: `${Math.min(budgetPercent, 100)}%`, backgroundColor: budgetColor }}
-            />
-          </div>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            ${costData.thisMonth.toFixed(2)} / ${costData.budget.toFixed(2)}
-          </p>
+          {costData.budget != null ? (
+            <>
+              <div className="text-3xl font-bold" style={{ color: budgetColor }}>
+                {budgetPercent.toFixed(0)}%
+              </div>
+              <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
+                <div
+                  className="h-full transition-all duration-500"
+                  style={{ width: `${Math.min(budgetPercent, 100)}%`, backgroundColor: budgetColor }}
+                />
+              </div>
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                ${costData.thisMonth.toFixed(2)} / ${costData.budget.toFixed(2)} month-to-date
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="text-3xl font-bold" style={{ color: "var(--text-muted)" }}>—</div>
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                No cap set — add one in Settings
+              </p>
+            </>
+          )}
         </div>
       </div>
 
@@ -323,8 +382,6 @@ export default function CostsPage() {
                 <th className="text-left py-3 px-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Model</th>
                 <th className="text-right py-3 px-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Input</th>
                 <th className="text-right py-3 px-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Output</th>
-                <th className="text-right py-3 px-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Cache Read</th>
-                <th className="text-right py-3 px-4 text-sm font-medium" style={{ color: "var(--text-secondary)" }}>Cache Write</th>
               </tr>
             </thead>
             <tbody>
@@ -335,8 +392,6 @@ export default function CostsPage() {
                   </td>
                   <td className="py-3 px-4 text-right" style={{ color: "var(--text-primary)" }}>${prices.input}</td>
                   <td className="py-3 px-4 text-right" style={{ color: "var(--text-primary)" }}>${prices.output}</td>
-                  <td className="py-3 px-4 text-right" style={{ color: "var(--text-secondary)" }}>${prices.cacheRead}</td>
-                  <td className="py-3 px-4 text-right" style={{ color: "var(--text-secondary)" }}>${prices.cacheWrite}</td>
                 </tr>
               ))}
             </tbody>
@@ -361,7 +416,7 @@ export default function CostsPage() {
             </thead>
             <tbody>
               {costData.byAgent.map((agent) => {
-                const percent = (agent.cost / costData.thisMonth) * 100;
+                const percent = costData.thisMonth > 0 ? (agent.cost / costData.thisMonth) * 100 : 0;
                 return (
                   <tr key={agent.agent} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td className="py-3 px-4">

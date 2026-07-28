@@ -3,16 +3,29 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Client, Room } from "colyseus.js";
 import { WS_URL } from "@/lib/paths";
+import type {
+  AgentStatus,
+  AgentStatusPayload,
+  AgentMessagePayload,
+  AgentActionPayload,
+  AgentHiredPayload,
+  HiredAgent,
+  BoardStartedPayload,
+  TaskCreatedPayload,
+  TaskCompletedPayload,
+  TaskFailedPayload,
+} from "@aihq/types";
 
 export interface AgentStatusEvent {
   id: string;
-  status: "idle" | "working" | "thinking" | "talking" | "in-meeting";
+  status: AgentStatus;
 }
 
 export interface AgentMessageEvent {
   agentId: string;
   message: string;
   timestamp: number;
+  isReport?: boolean;
 }
 
 export interface AgentHiredEvent {
@@ -23,14 +36,13 @@ export interface AgentHiredEvent {
   deskPosition: [number, number, number];
 }
 
-export interface TaskEvent {
-  id: string;
-  title: string;
-  agentId: string;
-  status: "created" | "completed";
-  output?: string;
-  outputPath?: string;
-  timestamp: number;
+import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks } from "./office-ws-handlers";
+export type { TaskEvent } from "./office-ws-handlers";
+import type { TaskEvent } from "./office-ws-handlers";
+
+export interface BoardMeetingState {
+  active: boolean;
+  participants: string[];
 }
 
 export interface OfficeWsState {
@@ -39,6 +51,22 @@ export interface OfficeWsState {
   messages: AgentMessageEvent[];
   tasks: TaskEvent[];
   hiredAgents: AgentHiredEvent[];
+  boardMeeting: BoardMeetingState;
+  paHeadingToCeo: boolean;   // true when PA is walking to CEO corner for a report delivery
+}
+
+// Fire-and-forget POST to the local activities API so the home page stats stay current
+function logActivity(
+  type: string,
+  description: string,
+  status: "success" | "error" | "pending" | "running",
+  agent?: string,
+) {
+  fetch("/api/activities", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, description, status, agent: agent ?? null }),
+  }).catch(() => {/* best-effort — never block UI */});
 }
 
 export function useOfficeWs() {
@@ -51,6 +79,8 @@ export function useOfficeWs() {
     messages: [],
     tasks: [],
     hiredAgents: [],
+    boardMeeting: { active: false, participants: [] },
+    paHeadingToCeo: false,
   });
 
   const connect = useCallback(async () => {
@@ -65,63 +95,129 @@ export function useOfficeWs() {
 
       setState((prev) => ({ ...prev, connected: true }));
 
-      room.onMessage("agent:status", (data: AgentStatusEvent) => {
+      // BUG FIX: server broadcasts { agentId, status } but we were reading data.id
+      // (`id` kept as a legacy fallback field — the contract only has agentId)
+      room.onMessage("agent:status", (data: AgentStatusPayload & { id?: string }) => {
+        const id = data.agentId || data.id;
+        if (!id) return;
         setState((prev) => ({
           ...prev,
-          agentStatuses: { ...prev.agentStatuses, [data.id]: data.status },
+          agentStatuses: { ...prev.agentStatuses, [id]: data.status },
         }));
       });
 
-      room.onMessage("agent:message", (data: AgentMessageEvent) => {
+      room.onMessage("agent:message", (data: AgentMessagePayload) => {
+        const msg: AgentMessageEvent = {
+          agentId: data.agentId,
+          message: data.message,
+          timestamp: Date.now(),
+          isReport: data.isReport ?? false,
+        };
         setState((prev) => ({
           ...prev,
-          messages: [data, ...prev.messages].slice(0, 200),
+          messages: [msg, ...prev.messages].slice(0, 200),
+          // PA delivers a report to the CEO → set heading-to-ceo flag
+          paHeadingToCeo:
+            data.agentId === "pa" && data.targetId === "ceo" && data.isReport === true,
         }));
       });
 
-      room.onMessage("agent:hired", (data: AgentHiredEvent) => {
+      room.onMessage("agent:action", (data: AgentActionPayload) => {
+        logActivity(
+          "tool_use",
+          `${data.agentId}: ${data.action} — ${(data.detail ?? "").slice(0, 120)}`,
+          "success",
+          data.agentId,
+        );
+      });
+
+      room.onMessage("agent:hired", (data: AgentHiredPayload) => {
+        // Server nests the payload under `agent`: { type, agent: { id, name, role, deskPosition } }
+        const a = (data.agent || data) as HiredAgent & { emoji?: string };
+        if (!a?.id) return;
+        const hired: AgentHiredEvent = {
+          id: a.id,
+          name: a.name,
+          role: a.role,
+          emoji: a.emoji,
+          deskPosition: a.deskPosition,
+        };
+        setState((prev) =>
+          prev.hiredAgents.some((h) => h.id === hired.id)
+            ? prev
+            : { ...prev, hiredAgents: [...prev.hiredAgents, hired] }
+        );
+        logActivity("agent_hired", `New agent hired: ${hired.name} (${hired.role})`, "success");
+      });
+
+      room.onMessage("board:started", (data: BoardStartedPayload) => {
         setState((prev) => ({
           ...prev,
-          hiredAgents: [...prev.hiredAgents, data],
+          boardMeeting: { active: true, participants: data.participants ?? [] },
         }));
       });
 
-      room.onMessage("task:created", (data: any) => {
-        // Server sends { type, task: { id, title, assignedTo, status, createdAt } }
-        const t = data.task || data;
+      room.onMessage("board:ended", () => {
         setState((prev) => ({
           ...prev,
-          tasks: [{
-            id: t.id || `task_${Date.now()}`,
-            title: t.title || 'Untitled',
-            agentId: t.assignedTo || t.agentId || 'unknown',
-            status: "created" as const,
-            timestamp: Date.now(),
-          }, ...prev.tasks].slice(0, 100),
+          boardMeeting: { active: false, participants: [] },
         }));
       });
 
-      room.onMessage("task:completed", (data: any) => {
-        // Server sends { type, task: { id, title, assignedTo, status, outputPath, completedAt } }
-        const t = data.task || data;
+      room.onMessage("task:created", (data: TaskCreatedPayload) => {
+        setState((prev) => ({ ...prev, tasks: applyTaskCreated(prev.tasks, data, Date.now()) }));
+      });
+
+      room.onMessage("task:completed", (data: TaskCompletedPayload) => {
+        const t = (data.task || data) as TaskCompletedPayload["task"] & { agentId?: string };
+        setState((prev) => ({ ...prev, tasks: applyTaskCompleted(prev.tasks, data) }));
+        logActivity(
+          "task",
+          `Completed: ${t.title || t.id}`,
+          "success",
+          t.assignedTo || t.agentId,
+        );
+      });
+
+      room.onMessage("task:failed", (data: TaskFailedPayload) => {
+        const t = (data.task || data) as TaskFailedPayload["task"] & { agentId?: string };
+        setState((prev) => ({ ...prev, tasks: applyTaskFailed(prev.tasks, data) }));
+        logActivity(
+          "task",
+          `Failed: ${t.title || t.id}${t.error ? ` — ${String(t.error).slice(0, 100)}` : ""}`,
+          "error",
+          t.assignedTo || t.agentId,
+        );
+      });
+
+      // Initial state pushed by the server on join — without these handlers the
+      // sync data is dropped (and colyseus.js logs 'onMessage() not registered').
+      room.onMessage("tasks-sync", (tasks: Array<{ id: number; title: string; assignedTo: string; status: string; completedAt?: string }>) => {
+        if (!Array.isArray(tasks)) return;
+        setState((prev) => ({ ...prev, tasks: mapSyncTasks(tasks, Date.now()) }));
+      });
+
+      room.onMessage("agents-sync", (agents: Array<{ id: string; status: AgentStatusPayload["status"] }>) => {
+        if (!Array.isArray(agents)) return;
         setState((prev) => ({
           ...prev,
-          tasks: prev.tasks.map((task) =>
-            task.id === t.id
-              ? { ...task, status: "completed" as const, outputPath: t.outputPath || t.output || undefined }
-              : task
-          ),
+          agentStatuses: {
+            ...prev.agentStatuses,
+            ...Object.fromEntries(agents.map((a) => [a.id, a.status])),
+          },
         }));
       });
 
       room.onLeave(() => {
         setState((prev) => ({ ...prev, connected: false }));
         roomRef.current = null;
-        // Reconnect after 3s
         setTimeout(connect, 3000);
       });
+
+      // All handlers registered — pull the initial state (pushing from the
+      // server's onJoin would race these registrations).
+      room.send("sync-request");
     } catch {
-      // Server offline — retry after 5s
       setTimeout(connect, 5000);
     }
   }, []);

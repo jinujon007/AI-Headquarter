@@ -41,9 +41,10 @@ export interface AgentConfig {
     id: string;
     name: string;
     role: string;
-    avatar: string;              // Sprite sheet reference
+    avatar: string;
     inference: InferenceConfig;
     personality: PersonalityConfig;
     capabilities: Capability[];
     memory: MemoryConfig;
+    deskPosition?: [number, number, number];
 }

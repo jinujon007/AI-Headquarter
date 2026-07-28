@@ -6,7 +6,11 @@
     "apps/*",
     "packages/*"
   ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
+    "postinstall": "npm run build --workspace=packages/types && npm run build --workspace=packages/core && npm run build --workspace=packages/adapters",
     "dev": "concurrently \"npm run dev --workspace=apps/dashboard\" \"npm run dev --workspace=apps/server\"",
     "build": "npm run build --workspaces",
     "start": "concurrently \"npm run start --workspace=apps/dashboard\" \"npm run start --workspace=apps/server\""

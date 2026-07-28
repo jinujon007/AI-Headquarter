@@ -24,3 +24,9 @@ PHASE2_SPECS.md
 apps/dashboard/data/*.db
 apps/dashboard/data/*.db-shm
 apps/dashboard/data/*.db-wal
+
+# Local Python runtime guard (never commit)
+apps/server/Python/
+
+# Internal planning docs (never ship public)
+docs/internal/

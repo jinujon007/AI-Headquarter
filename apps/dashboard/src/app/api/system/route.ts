@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
+import { clearActivities } from '@/lib/activities-db';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,7 +48,8 @@ export async function POST(request: Request) {
   try {
     const { action } = await request.json();
     if (action === 'clear_activity_log') {
-      return NextResponse.json({ success: true, message: 'Activity log cleared' });
+      const deleted = clearActivities();
+      return NextResponse.json({ success: true, message: `Activity log cleared (${deleted} entries)` });
     }
     return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   } catch {

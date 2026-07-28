@@ -15,6 +15,15 @@ Read this at the start of every session. This is the single source of truth for 
 
 **GitHub target:** 10,000 stars within 90 days of launch.
 
+## Product Goal (North Star — set 2026-07-15)
+
+AI HQ is a **sellable product**, not just an OSS repo. Customers set up and run a virtual AI office — AI employees they command as CEO — to build startups. The GitHub goal is a distribution channel for this.
+
+- Every build decision moves toward a fully functioning, scalable prototype a stranger would pay for.
+- Reliability of the core loop (CEO command → agents work → real output files) beats feature breadth.
+- Known constraint: current architecture is single-tenant by construction (one office room, shared state). Hosted SaaS requires a room-per-user rewrite (v2). Near-term saleable shapes: self-hosted paid license, BYOK local/desktop product, or managed single instances.
+- Standing mandate: stress-test the idea — market, competition, monetization, whether the 3D office differentiates or is a demo gimmick.
+
 ---
 
 ## Source Repos (Forked, MIT Licensed)
@@ -61,16 +70,15 @@ User (CEO) → dashboard chat panel
 ```
 GET  /api/agents              all agents, status, role, desk position
 POST /api/agents/hire         hire new specialist
-POST /api/ceo/message         CEO sends command → goes to PA agent
+POST /api/ceo/message         CEO sends command → goes to PA agent (SSE stream)
 GET  /api/tasks               all tasks, assigned agent, status, output
-GET  /api/sessions            session history, token usage
 GET  /api/costs               usage/cost data from SQLite
-GET  /api/system              CPU, RAM, disk metrics
+GET  /api/output              read an output file (path-guarded)
+GET  /api/system              served by the dashboard locally (CPU, RAM, disk)
 ```
 
 ### WebSocket (Colyseus → dashboard real-time)
 ```
-agent:move        agent position changed → update 3D desk
 agent:status      idle / thinking / working / talking / in-meeting
 agent:message     agent said something → chat log
 agent:action      tool call executed → activity feed
@@ -79,7 +87,9 @@ board:started     board meeting triggered → agents move to Board Room
 board:ended       board meeting done
 task:created      new task assigned
 task:completed    task done, output file path returned
+task:failed       task errored → status + toast
 ```
+Agent positions sync via the Colyseus state schema (OfficeState/AgentState), not a discrete `agent:move` event.
 
 ---
 
@@ -147,7 +157,7 @@ Agent zones have semantic meaning:
 - Groq (fast inference)
 - Gemini (Google)
 
-All adapters live in `packages/adapters/`. Switch is per-agent or global from dashboard settings panel.
+All adapters live in `packages/adapters/`. Provider selection is global (per-session): the first configured BYOK key in dashboard Settings is used for all agents; hired agents inherit the session provider. Per-agent overrides are not implemented.
 
 ---
 
@@ -156,9 +166,11 @@ All adapters live in `packages/adapters/`. Switch is per-agent or global from da
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | This file. Project context. Read at session start. |
-| `TASK_QUEUE.md` | Atomic task list. Single source of truth for what to build next. |
+| `docs/internal/TASK_QUEUE.md` | Atomic task list. Single source of truth for what to build next. |
 | `CHANGELOG.md` | File-level change log. Every agent logs here after each task. |
-| `AGENTS.md` | Full multi-brain protocol. Roles, rules, conventions. |
+| `docs/internal/AGENTS.md` | Full multi-brain protocol. Roles, rules, conventions. |
+
+All planning/strategy docs live in `docs/internal/` (gitignored — never ships public). Contributor-facing docs: root README, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT + `docs/*.md`.
 
 ---
 

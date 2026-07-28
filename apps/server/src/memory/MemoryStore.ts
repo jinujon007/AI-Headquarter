@@ -2,6 +2,49 @@
 import { open, Database } from 'sqlite';
 import { MemoryEntry } from '@aihq/core';
 
+// Per-million-token pricing: [prefix, input $/1M, output $/1M]. First matching prefix wins,
+// so more specific prefixes (gpt-4o-mini) must come before general ones (gpt-4o).
+const MODEL_PRICING: [string, number, number][] = [
+    ['ollama', 0, 0],
+    ['llama', 0, 0],
+    ['mistral', 0, 0],
+    ['qwen', 0, 0],
+    ['gemma', 0, 0],
+    ['phi', 0, 0],
+    ['claude', 3, 15],
+    ['gpt-4o-mini', 0.15, 0.6],
+    ['gpt-4o', 2.5, 10],
+    ['gpt-4.1', 2, 8],
+    ['gemini', 0.10, 0.40],
+];
+
+export function costOf(model: string | null, promptTokens: number, completionTokens: number): number {
+    const name = (model || '').toLowerCase();
+    const entry = MODEL_PRICING.find(([prefix]) => name.startsWith(prefix));
+    if (!entry) return 0; // Unknown models default to free — assumed local/self-hosted.
+    return (promptTokens * entry[1] + completionTokens * entry[2]) / 1_000_000;
+}
+
+// Rough pre-run cost estimate: delegate count × avg tokens per specialist call.
+// Defaults to 2k-in/1k-out per call when no usage history exists.
+export function estimateRunCost(
+    delegateCount: number,
+    model: string,
+    avg?: { prompt: number; completion: number } | null,
+): number {
+    const prompt = avg?.prompt || 2000;
+    const completion = avg?.completion || 1000;
+    return delegateCount * costOf(model, prompt, completion);
+}
+
+// True when a paid model must be refused because month-to-date spend hit the cap.
+// No cap set → unlimited (current behavior). Free/local models are never blocked.
+export function budgetBlocks(model: string, budgetUsd: number | null, spentUsd: number): boolean {
+    if (budgetUsd == null) return false;
+    if (costOf(model, 1_000_000, 1_000_000) === 0) return false;
+    return spentUsd >= budgetUsd;
+}
+
 function cosineSimilarity(a: number[], b: number[]): number {
     if (a.length !== b.length) return 0;
     let dot = 0, magA = 0, magB = 0;
@@ -62,6 +105,11 @@ export class MemoryStore {
                 updated_at TEXT DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS usage_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT,
@@ -84,12 +132,18 @@ export class MemoryStore {
     // --- Embedding Generation ---
 
     private async generateEmbedding(text: string): Promise<number[] | null> {
+        const embeddingModel = process.env.OLLAMA_EMBEDDING_MODEL || process.env.OLLAMA_MODEL || 'llama3.1:8b';
         try {
+            const ac = new AbortController();
+            const timeoutId = setTimeout(() => ac.abort(), 10_000);
             const res = await fetch(`${this.ollamaUrl}/api/embeddings`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: 'llama3.2:latest', prompt: text })
+                body: JSON.stringify({ model: embeddingModel, prompt: text }),
+                signal: ac.signal,
             });
+            clearTimeout(timeoutId);
+            if (!res.ok) return null;
             const data = await res.json();
             return data.embedding || null;
         } catch {
@@ -101,16 +155,21 @@ export class MemoryStore {
 
     async saveMemory(agentId: string, entry: MemoryEntry, sessionId?: string): Promise<void> {
         if (!this.db) return;
-        // Generate embedding for semantic search (async, non-blocking)
-        let embeddingStr: string | null = null;
-        if (entry.importance >= 0.5) {
-            const embedding = await this.generateEmbedding(entry.content);
-            if (embedding) embeddingStr = JSON.stringify(embedding);
-        }
-        await this.db.run(
+        // Insert immediately without embedding so task completion is never delayed by Ollama.
+        // Embedding is generated in the background and patched in after insert.
+        const result = await this.db.run(
             'INSERT INTO memories (agent_id, content, type, timestamp, importance, embedding, session_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-            [agentId, entry.content, entry.type, entry.timestamp, entry.importance, embeddingStr, sessionId || null]
+            [agentId, entry.content, entry.type, entry.timestamp, entry.importance, null, sessionId || null]
         );
+        if (entry.importance >= 0.5 && result.lastID && this.db) {
+            const rowId = result.lastID;
+            const db = this.db;
+            this.generateEmbedding(entry.content).then(embedding => {
+                if (embedding) {
+                    db.run('UPDATE memories SET embedding = ? WHERE id = ?', [JSON.stringify(embedding), rowId]).catch(() => {});
+                }
+            }).catch(() => {});
+        }
     }
 
     async saveMemories(agentId: string, entries: MemoryEntry[], sessionId?: string): Promise<void> {
@@ -196,6 +255,24 @@ export class MemoryStore {
         );
     }
 
+    // Boot-time recovery: any task still pending/in_progress at startup died with
+    // the previous process — mark it failed so the UI never shows a silent hang.
+    async failStaleTasks(): Promise<number> {
+        if (!this.db) return 0;
+        const result = await this.db.run(
+            "UPDATE tasks SET status = 'failed' WHERE status IN ('pending', 'in_progress', 'in-progress')"
+        );
+        return result.changes || 0;
+    }
+
+    async markTaskFailed(taskId: number): Promise<void> {
+        if (!this.db) return;
+        await this.db.run(
+            "UPDATE tasks SET status = 'failed' WHERE id = ?",
+            [taskId]
+        );
+    }
+
     // --- Layout Operations ---
 
     async saveLayout(name: string, layoutJson: string): Promise<void> {
@@ -218,8 +295,61 @@ export class MemoryStore {
         if (this.db) await this.db.close();
     }
 
+    // --- Settings ---
+
+    async getSetting(key: string): Promise<string | null> {
+        if (!this.db) return null;
+        const row = await this.db.get('SELECT value FROM settings WHERE key = ?', [key]);
+        return row?.value ?? null;
+    }
+
+    async setSetting(key: string, value: string | null): Promise<void> {
+        if (!this.db) return;
+        if (value === null || value === '') {
+            await this.db.run('DELETE FROM settings WHERE key = ?', [key]);
+        } else {
+            await this.db.run(
+                'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+                [key, value]
+            );
+        }
+    }
+
+    // Monthly budget cap in USD. Settings value wins, then AIHQ_BUDGET_USD env, else no cap.
+    async getBudgetUsd(): Promise<number | null> {
+        const stored = await this.getSetting('budget_usd');
+        const raw = stored ?? process.env.AIHQ_BUDGET_USD;
+        if (raw == null || raw === '') return null;
+        const n = Number(raw);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    }
+
+    async getMonthToDateSpend(): Promise<number> {
+        if (!this.db) return 0;
+        const thisMonth = new Date().toISOString().substring(0, 7);
+        const rows = await this.db.all(`
+            SELECT model, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens
+            FROM usage_log
+            WHERE strftime('%Y-%m', created_at) = ?
+            GROUP BY model
+        `, [thisMonth]);
+        return rows.reduce((acc: number, r: any) => acc + costOf(r.model, r.prompt_tokens || 0, r.completion_tokens || 0), 0);
+    }
+
+    // Average tokens per logged LLM call, for the pre-run estimate. Null with no history.
+    async getAvgTokensPerCall(): Promise<{ prompt: number; completion: number } | null> {
+        if (!this.db) return null;
+        const row = await this.db.get(`
+            SELECT AVG(prompt_tokens) as prompt, AVG(completion_tokens) as completion
+            FROM (SELECT prompt_tokens, completion_tokens FROM usage_log ORDER BY id DESC LIMIT 200)
+            WHERE prompt_tokens > 0
+        `);
+        if (!row || !row.prompt) return null;
+        return { prompt: Math.round(row.prompt), completion: Math.round(row.completion || 0) };
+    }
+
     // --- Usage Tracking ---
-    
+
     async logUsage(sessionId: string, agentId: string, taskId: number, model: string, promptTokens: number, completionTokens: number): Promise<void> {
         if (!this.db) return;
         await this.db.run(
@@ -243,5 +373,96 @@ export class MemoryStore {
             ORDER BY date DESC
             LIMIT 100
         `);
+    }
+
+    async getCostsData(): Promise<any> {
+        if (!this.db) return this.emptyCosts();
+        
+        const now = new Date();
+        const today = now.toISOString().split('T')[0];
+        const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
+        const thisMonth = today.substring(0, 7);
+        const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const lastMonth = lastMonthDate.toISOString().substring(0, 7);
+        
+        // Single query grouped by (agent, model, date) — every breakdown below derives
+        // from it so per-model pricing (costOf) applies everywhere consistently.
+        const rows = await this.db.all(`
+            SELECT
+                agent_id,
+                model,
+                DATE(created_at) as date,
+                SUM(prompt_tokens) as prompt_tokens,
+                SUM(completion_tokens) as completion_tokens
+            FROM usage_log
+            GROUP BY agent_id, model, DATE(created_at)
+            ORDER BY date DESC
+        `);
+
+        const toCost = (rs: any[]) => rs.reduce(
+            (acc: number, r: any) => acc + costOf(r.model, r.prompt_tokens || 0, r.completion_tokens || 0), 0);
+
+        const todayRows = rows.filter((r: any) => r.date === today);
+        const yesterdayRows = rows.filter((r: any) => r.date === yesterday);
+        const thisMonthRows = rows.filter((r: any) => r.date.startsWith(thisMonth));
+        const lastMonthRows = rows.filter((r: any) => r.date.startsWith(lastMonth));
+
+        const byAgentMap = new Map<string, { cost: number; tokens: number }>();
+        const byModelMap = new Map<string, { cost: number; tokens: number }>();
+        const dailyMap = new Map<string, { cost: number; input: number; output: number }>();
+        for (const r of rows) {
+            const input = r.prompt_tokens || 0;
+            const output = r.completion_tokens || 0;
+            const cost = costOf(r.model, input, output);
+
+            const a = byAgentMap.get(r.agent_id) || { cost: 0, tokens: 0 };
+            a.cost += cost; a.tokens += input + output;
+            byAgentMap.set(r.agent_id, a);
+
+            const m = byModelMap.get(r.model) || { cost: 0, tokens: 0 };
+            m.cost += cost; m.tokens += input + output;
+            byModelMap.set(r.model, m);
+
+            const d = dailyMap.get(r.date) || { cost: 0, input: 0, output: 0 };
+            d.cost += cost; d.input += input; d.output += output;
+            dailyMap.set(r.date, d);
+        }
+
+        const byAgent = [...byAgentMap.entries()].map(([agent, v]) => ({ agent, ...v }));
+        const byModel = [...byModelMap.entries()].map(([model, v]) => ({ model, ...v }));
+        // rows are ordered date DESC, so dailyMap insertion order is newest-first.
+        const daily = [...dailyMap.entries()].map(([date, v]) => ({ date, ...v })).slice(0, 30);
+
+        const thisMonthCost = toCost(thisMonthRows);
+        const dailyAvg = daily.length > 0 ? daily.reduce((acc: number, d: any) => acc + d.cost, 0) / daily.length : 0;
+        const daysRemaining = 30 - new Date().getDate();
+
+        return {
+            today: toCost(todayRows),
+            yesterday: toCost(yesterdayRows),
+            thisMonth: thisMonthCost,
+            lastMonth: toCost(lastMonthRows),
+            projected: thisMonthCost + (dailyAvg * daysRemaining),
+            budget: await this.getBudgetUsd(),
+            byAgent,
+            byModel,
+            daily,
+            hourly: []
+        };
+    }
+
+    private emptyCosts(): any {
+        return {
+            today: 0,
+            yesterday: 0,
+            thisMonth: 0,
+            lastMonth: 0,
+            projected: 0,
+            budget: null,
+            byAgent: [],
+            byModel: [],
+            daily: [],
+            hourly: []
+        };
     }
 }

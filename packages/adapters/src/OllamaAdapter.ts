@@ -8,17 +8,26 @@ export class OllamaAdapter implements InferenceAdapter {
 
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
         const start = Date.now();
+        const ac = new AbortController();
+        // CPU-bound local inference can exceed 60s — tunable without a rebuild.
+        const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS) || 60_000;
+        const timeoutId = setTimeout(() => ac.abort(), timeoutMs);
         const response = await fetch(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: ac.signal,
             body: JSON.stringify({
                 model: request.model,
                 messages: request.messages,
                 stream: false,
                 tools: request.tools,
+                // format:"json" makes Ollama constrain decoding to valid JSON —
+                // essential for small local models that otherwise truncate JSON.
+                ...(request.responseFormat === 'json' ? { format: 'json' } : {}),
                 options: { temperature: request.temperature }
             })
         });
+        clearTimeout(timeoutId);
 
         if (!response.ok) {
             throw new Error(`Ollama Error: ${response.statusText}`);
@@ -53,9 +62,12 @@ export class OllamaAdapter implements InferenceAdapter {
         onDone: () => void;
         temperature?: number;
     }): Promise<string> {
+        const ac = new AbortController();
+        const timeoutId = setTimeout(() => ac.abort(), 60_000);
         const response = await fetch(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: ac.signal,
             body: JSON.stringify({
                 model: options.model,
                 messages: options.messages,
@@ -63,6 +75,7 @@ export class OllamaAdapter implements InferenceAdapter {
                 options: { temperature: options.temperature ?? 0.7 },
             }),
         });
+        clearTimeout(timeoutId);
 
         if (!response.ok || !response.body) {
             throw new Error(`Ollama stream failed: ${response.status}`);
