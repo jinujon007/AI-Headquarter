@@ -422,12 +422,6 @@ this.onMessage('assign-task', async (client, message) => {
         apiKey: string | undefined,
         emit: (event: object) => void,
     ): Promise<void> {
-        // Store session provider so hired agents and future delegations use the same model
-        if (provider && apiKey) {
-            this.sessionProvider = provider;
-            this.sessionApiKey = apiKey;
-        }
-
         const paState = this.state.agents.get('pa');
         if (!paState) { emit({ type: 'error', message: 'PA agent not available.' }); return; }
 
@@ -463,11 +457,16 @@ ${historyContext}
 Respond with a JSON object ONLY — no text outside the JSON:
 {
   "reply": "2-3 sentence natural response to the CEO",
-  "delegates": ["array of specialist IDs to assign work — use the exact ids: ${rosterIds} — empty array if no delegation needed"]
+  "delegates": ["array of specialist IDs to assign work — use the exact ids: ${rosterIds} — empty array if no delegation needed"],
+  "hire": {"name": "...", "role": "..."}
 }
+Include "hire" ONLY when the CEO explicitly asks to hire someone new — omit the field otherwise. Invent a fitting first name if the CEO gave none.
 
 Example — CEO says "Build me a landing page for my bakery":
 {"reply": "On it. Ray will research the market, Cleo will write the copy, and Dev will build the page.", "delegates": ["researcher", "copywriter", "dev"]}
+
+Example — CEO says "hire a financial analyst":
+{"reply": "Done — Fiona joins as our Financial Analyst. Her desk is being set up now; she can take work from your next command.", "delegates": [], "hire": {"name": "Fiona", "role": "Financial Analyst"}}
 
 Example — CEO says "thanks, looks great":
 {"reply": "Glad you like it. Say the word when you want the next thing built.", "delegates": []}`;
@@ -490,6 +489,13 @@ Example — CEO says "thanks, looks great":
             return;
         }
 
+        // Store the session provider only for runs that actually proceed — a
+        // budget-refused attempt must not relabel every agent with a paid model.
+        if (provider && apiKey) {
+            this.sessionProvider = provider;
+            this.sessionApiKey = apiKey;
+        }
+
         try {
             const adapter = this.getAdapter(provider, apiKey);
 
@@ -509,6 +515,11 @@ Example — CEO says "thanks, looks great":
             const parsed = this.parseStructuredResponse(raw);
             if (parsed) { fullResponse = parsed.reply; delegates = parsed.delegates; }
             else { fullResponse = raw || 'On it.'; }
+            // Chat-driven hiring: "hire a financial analyst" spawns a real agent + desk
+            if (parsed?.hire?.name && parsed.hire.role) {
+                const hired = this.hireAgent(parsed.hire.name, parsed.hire.role, provider, apiKey);
+                if (hired?.error) fullResponse += ` (Couldn't hire: ${hired.error})`;
+            }
             // Pre-run cost estimate in the PA acknowledgment — BYOK only ($0 estimates are skipped)
             if (delegates.length > 0) {
                 const avg = await this.memoryStore.getAvgTokensPerCall();
@@ -558,7 +569,7 @@ Example — CEO says "thanks, looks great":
         return out;
     }
 
-    private parseStructuredResponse(raw: string): { reply: string; delegates: string[] } | null {
+    private parseStructuredResponse(raw: string): { reply: string; delegates: string[]; hire?: { name: string; role: string } } | null {
         // Try strict parse first, then brace-repaired parse — small local models
         // regularly stop before closing the JSON object.
         const match = raw.match(/\{[\s\S]*\}/) || raw.match(/\{[\s\S]*/);
@@ -567,11 +578,24 @@ Example — CEO says "thanks, looks great":
             for (const candidate of [match[0], this.repairJson(match[0])]) {
                 try {
                     const parsed = JSON.parse(candidate);
-                    if (typeof parsed.reply === 'string') {
-                        const delegates = Array.isArray(parsed.delegates)
+                    if (parsed && typeof parsed === 'object') {
+                        const delegates = this.normalizeDelegates(Array.isArray(parsed.delegates)
                             ? parsed.delegates.filter((d: unknown) => typeof d === 'string')
-                            : [];
-                        return { reply: parsed.reply, delegates: this.normalizeDelegates(delegates) };
+                            : []);
+                        const hire = parsed.hire && typeof parsed.hire.name === 'string' && typeof parsed.hire.role === 'string'
+                            ? { name: parsed.hire.name.trim().slice(0, 50), role: parsed.hire.role.trim().slice(0, 100) }
+                            : undefined;
+                        // Small models often omit the reply field while still returning
+                        // valid delegates/hire — honor the structure, synthesize the words.
+                        let reply = typeof parsed.reply === 'string' ? parsed.reply : '';
+                        if (!reply) {
+                            reply = hire
+                                ? `Done — ${hire.name} joins as our ${hire.role}. The desk is being set up now.`
+                                : delegates.length > 0
+                                    ? 'On it — delegating to the team now.'
+                                    : '';
+                        }
+                        if (reply) return { reply, delegates, hire };
                     }
                 } catch { /* try next candidate */ }
             }

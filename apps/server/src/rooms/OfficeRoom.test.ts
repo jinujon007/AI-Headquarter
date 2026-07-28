@@ -94,11 +94,19 @@ describe('parseStructuredResponse', () => {
         expect(room.parseStructuredResponse('total nonsense with zero braces in it')).toBeNull();
     });
 
-    it('falls back when JSON lacks a reply string', () => {
+    it('honors delegates when JSON lacks a reply string, with a synthesized reply', () => {
         const room = makeRoom();
         const out = room.parseStructuredResponse('{"delegates":["dev"]}');
-        // no reply field → substring fallback still finds "dev" in the raw text
         expect(out.delegates).toEqual(['dev']);
+        expect(out.reply).toBe('On it — delegating to the team now.');
+    });
+
+    it('honors hire when the model omits the reply field (live llama3.2:3b behavior)', () => {
+        const room = makeRoom();
+        const out = room.parseStructuredResponse('{\n  "hire": {"name": "Zoe", "role": "Data Scientist"}\n}');
+        expect(out.hire).toEqual({ name: 'Zoe', role: 'Data Scientist' });
+        expect(out.reply).toContain('Zoe joins as our Data Scientist');
+        expect(out.delegates).toEqual([]);
     });
 });
 
@@ -229,6 +237,43 @@ describe('streamCeoMessage', () => {
         const tokenCall = emit.mock.calls.find((c: any[]) => c[0].type === 'token');
         // claude default model: 1 delegate × (2000×$3 + 1000×$15)/1M = $0.021 → rendered with 2 decimals
         expect(tokenCall[0].token).toMatch(/Estimated cost for this run: ~\$0\.02/);
+    });
+
+    it('hires a new agent when the PA returns a hire field', async () => {
+        const room = makeRoom();
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '{"reply":"Done — Fiona joins as Financial Analyst.","delegates":[],"hire":{"name":"Fiona","role":"Financial Analyst"}}',
+                usage: { prompt: 10, completion: 5 },
+            }),
+        });
+        room.delegate = jest.fn().mockResolvedValue(undefined);
+        room.hireAgent = jest.fn().mockReturnValue({ id: 'hire_0', name: 'Fiona', role: 'Financial Analyst' });
+        const emit = jest.fn();
+
+        await room.streamCeoMessage('hire a financial analyst', undefined, undefined, emit);
+
+        expect(room.hireAgent).toHaveBeenCalledWith('Fiona', 'Financial Analyst', undefined, undefined);
+        const tokenCall = emit.mock.calls.find((c: any[]) => c[0].type === 'token');
+        expect(tokenCall[0].token).toContain('Fiona joins');
+    });
+
+    it('does not hire when the hire field is absent or malformed', async () => {
+        const room = makeRoom();
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '{"reply":"On it.","delegates":["dev"],"hire":{"name":123}}',
+                usage: { prompt: 10, completion: 5 },
+            }),
+        });
+        room.delegate = jest.fn().mockResolvedValue(undefined);
+        room.hireAgent = jest.fn();
+        const emit = jest.fn();
+
+        await room.streamCeoMessage('build a page', undefined, undefined, emit);
+
+        expect(room.hireAgent).not.toHaveBeenCalled();
+        expect(room.delegate).toHaveBeenCalledWith('build a page', ['dev'], undefined, undefined);
     });
 
     it('never mentions cost for free local runs ($0 estimate skipped)', async () => {

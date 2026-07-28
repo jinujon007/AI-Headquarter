@@ -111,8 +111,9 @@ else
     fi
 fi
 
-# ── Dashboard .env.local ──────────────────────────────────────────────────────
-# Next.js reads env from apps/dashboard/.env.local, NOT the root .env.
+# ── Dashboard .env.local (optional) ──────────────────────────────────────────
+# The dashboard reads the root .env via next.config.mjs; .env.local is only an
+# optional override and takes precedence when present.
 echo "Checking dashboard .env.local..."
 if [ ! -f "apps/dashboard/.env.local" ]; then
     warn "apps/dashboard/.env.local not found. Creating from example..."

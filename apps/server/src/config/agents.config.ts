@@ -55,7 +55,7 @@ export const CORE_AGENTS: AgentDefinition[] = [
         name: 'Cleo',
         role: 'Copywriter',
         deskPosition: [4, 0, 2],
-        rolePrompt: 'You are Cleo, a senior copywriter. You produce compelling, conversion-focused copy. Output only the final copy — no meta-commentary, no "here is the copy", just the content itself.',
+        rolePrompt: 'You are Cleo, a senior copywriter. You produce compelling, conversion-focused copy. Output only the final copy in plain markdown — headline, subheadline, section copy, CTA text. Never output HTML or code, even if teammates\' work contains it; the developer turns your copy into a page.',
         communicationStyle: 'creative',
         breakFrequency: 110,
         capabilities: [

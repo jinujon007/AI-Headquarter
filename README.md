@@ -47,7 +47,7 @@ npm install && npm run dev
 
 Open **[http://localhost:3000](http://localhost:3000)** — log in with `ADMIN_PASSWORD` from your `.env`.
 
-**Default model:** `llama3.2:3b` (~2 GB — fits in 4 GB VRAM). On GPUs with ≥ 6 GB VRAM, upgrade to `llama3.1:8b` for better quality: `ollama pull llama3.1:8b` and set `OLLAMA_MODEL=llama3.1:8b` in `.env`.
+**Default model:** `llama3.2:3b` (~2 GB — fits in 4 GB VRAM). **Preview quality:** a 3B local model reliably completes the full agent loop, but its output is draft-grade (10-run blind test median: 5/10). For client-ready output, add a BYOK key (Claude, GPT-4o) in Settings — and set a monthly budget cap there. On GPUs with ≥ 6 GB VRAM, `llama3.1:8b` improves local quality: `ollama pull llama3.1:8b` and set `OLLAMA_MODEL=llama3.1:8b` in `.env`.
 
 > **Single-tenant:** AI HQ is single-tenant — one instance per user. Do not share a hosted instance; there is no user isolation between people using the same deployment.
 

@@ -416,7 +416,7 @@ export default function CostsPage() {
             </thead>
             <tbody>
               {costData.byAgent.map((agent) => {
-                const percent = (agent.cost / costData.thisMonth) * 100;
+                const percent = costData.thisMonth > 0 ? (agent.cost / costData.thisMonth) * 100 : 0;
                 return (
                   <tr key={agent.agent} style={{ borderBottom: "1px solid var(--border)" }}>
                     <td className="py-3 px-4">
