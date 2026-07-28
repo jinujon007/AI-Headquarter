@@ -1,3 +1,22 @@
+# [1.1.0](https://github.com/jinujon007/AI-Headquarter/compare/v1.0.0...v1.1.0) (2026-07-28)
+
+
+### Bug Fixes
+
+* **adapters): Anthropic system-role hoisting; feat(types:** real API contract ([f49bd61](https://github.com/jinujon007/AI-Headquarter/commit/f49bd613125fb769e2540f1cf2323077a6c33ab7))
+* **demo-loop:** survive small-model JSON, honest recovery, root .env actually read ([9dc65c6](https://github.com/jinujon007/AI-Headquarter/commit/9dc65c6800ca2a54470deb98e82de458346604de))
+* **docker:** compose path actually works end-to-end on a clean machine ([92fb531](https://github.com/jinujon007/AI-Headquarter/commit/92fb53112dd5c21b48904e87c3790f946e0b7dcb))
+* **honesty:** every dashboard page shows only real data; docs match code ([1fd6f0f](https://github.com/jinujon007/AI-Headquarter/commit/1fd6f0f8261a25bb84d01a5680cd80bc60882978))
+* **infra:** fresh clone starts, deploy paths work, CI lints ([eacca4e](https://github.com/jinujon007/AI-Headquarter/commit/eacca4e560f2042798568189a7d3a2a5c8f81e51))
+
+
+### Features
+
+* **costs:** pre-run cost estimate + monthly budget cap for BYOK ([6a9e27b](https://github.com/jinujon007/AI-Headquarter/commit/6a9e27b00c00fc52675a0777a77f7a9050f607fe))
+* **dashboard:** demo-truth UI — board meetings, hired desks, honest chat ([186df4f](https://github.com/jinujon007/AI-Headquarter/commit/186df4fbf18aed3e4d62002d09b7db62abef91ba))
+* **hiring:** chat-driven hiring works; parser honors partial JSON from small models ([22b5be0](https://github.com/jinujon007/AI-Headquarter/commit/22b5be0397863c820600bcd1ef45858a184a49ff))
+* **server:** delegation overhaul, security hardening, real costs ([b7fa442](https://github.com/jinujon007/AI-Headquarter/commit/b7fa442c9565ea4d47eafc0a11e18ec14428687b))
+
 # Changelog
 
 All notable changes to AI HQ are documented here.  
