@@ -167,6 +167,23 @@ app.get('/api/costs', async (_req, res) => {
   res.json(room ? await room.getCosts() : {});
 });
 
+app.get('/api/settings', async (_req, res) => {
+  const room = OfficeRoom.getActiveRoom();
+  if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
+  res.json({ ok: true, ...(await room.getSettings()) });
+});
+
+app.post('/api/settings', requireServerKey, async (req, res) => {
+  const room = OfficeRoom.getActiveRoom();
+  if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
+  const { budgetUsd } = req.body || {};
+  if (budgetUsd !== null && (typeof budgetUsd !== 'number' || !Number.isFinite(budgetUsd) || budgetUsd < 0)) {
+    res.status(400).json({ ok: false, error: 'budgetUsd must be a non-negative number or null' }); return;
+  }
+  await room.setBudgetUsd(budgetUsd);
+  res.json({ ok: true, ...(await room.getSettings()) });
+});
+
 app.get('/api/system', (_req, res) => {
   const totalMem = os.totalmem();
   const freeMem  = os.freemem();

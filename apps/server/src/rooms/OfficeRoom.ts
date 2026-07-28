@@ -3,7 +3,7 @@ import { OfficeState } from '../schema/OfficeState';
 import { Agent, Office, OfficeConfig, ConversationMessage } from '@aihq/core';
 import * as adapters from '@aihq/adapters';
 import { ToolExecutor } from '../tools/ToolExecutor';
-import { MemoryStore } from '../memory/MemoryStore';
+import { MemoryStore, estimateRunCost, budgetBlocks } from '../memory/MemoryStore';
 import { TaskManager } from '../tasks/TaskManager';
 import { CORE_AGENTS, HIRE_DESK_POSITIONS, BOARD_SEATS, DEFAULT_MODELS } from '../config/agents.config';
 import type { InferenceAdapter, CompletionRequest } from '@aihq/core';
@@ -466,6 +466,21 @@ Respond with a JSON object ONLY — no text outside the JSON:
         let fullResponse = '';
         let delegates: string[] = [];
 
+        // Budget cap: refuse paid-model work honestly before spending anything.
+        const budgetHit = await this.budgetExceeded(model);
+        if (budgetHit != null) {
+            fullResponse = `Monthly budget $${budgetHit} reached — raise it in Settings to continue with paid models, or switch to the free local Ollama provider.`;
+            emit({ type: 'token', agentId: 'pa', token: fullResponse });
+            emit({ type: 'done', agentId: 'pa' });
+            this.ceoHistory.push({ role: 'user', content });
+            this.ceoHistory.push({ role: 'assistant', content: fullResponse });
+            this.broadcast('agent:message', { type: 'agent:message', agentId: 'pa', message: fullResponse, targetId: 'ceo' });
+            const paIdle = this.state.agents.get('pa');
+            if (paIdle) { paIdle.action = 'idle'; paIdle.currentTask = ''; }
+            this.broadcast('agent:status', { type: 'agent:status', agentId: 'pa', status: 'idle' });
+            return;
+        }
+
         try {
             const adapter = this.getAdapter(provider, apiKey);
 
@@ -484,6 +499,12 @@ Respond with a JSON object ONLY — no text outside the JSON:
             const parsed = this.parseStructuredResponse(raw);
             if (parsed) { fullResponse = parsed.reply; delegates = parsed.delegates; }
             else { fullResponse = raw || 'On it.'; }
+            // Pre-run cost estimate in the PA acknowledgment — BYOK only ($0 estimates are skipped)
+            if (delegates.length > 0) {
+                const avg = await this.memoryStore.getAvgTokensPerCall();
+                const est = estimateRunCost(delegates.length, model, avg);
+                if (est > 0) fullResponse += ` (Estimated cost for this run: ~$${est.toFixed(est < 0.01 ? 4 : 2)})`;
+            }
             emit({ type: 'token', agentId: 'pa', token: fullResponse });
             emit({ type: 'done', agentId: 'pa' });
         } catch {
@@ -500,6 +521,14 @@ Respond with a JSON object ONLY — no text outside the JSON:
 
         this.broadcast('agent:message', { type: 'agent:message', agentId: 'pa', message: fullResponse, targetId: 'ceo' });
         await this.delegate(content, delegates, provider, apiKey);
+    }
+
+    // Returns the budget cap in USD when a paid call must be refused, else null.
+    private async budgetExceeded(model: string): Promise<number | null> {
+        const budget = await this.memoryStore.getBudgetUsd();
+        if (budget == null) return null;
+        const spent = await this.memoryStore.getMonthToDateSpend();
+        return budgetBlocks(model, budget, spent) ? budget : null;
     }
 
     // Map any LLM spelling (name, capitalised id, etc.) to a real agent id.
@@ -650,6 +679,17 @@ Respond with a JSON object ONLY — no text outside the JSON:
         try {
             const model = resolveModel(provider);
             const adapter = this.getAdapter(provider, apiKey);
+
+            // Budget cap: refuse honestly, mark the task failed — never silently proceed.
+            const budgetHit = await this.budgetExceeded(model);
+            if (budgetHit != null) {
+                this.broadcast('agent:message', {
+                    type: 'agent:message', agentId,
+                    message: `Monthly budget $${budgetHit} reached — raise it in Settings to continue with paid models.`,
+                    targetId: 'ceo',
+                });
+                throw new Error(`Monthly budget $${budgetHit} reached`);
+            }
 
             // Real web research: one search round for agents that have the capability,
             // results injected into the completion prompt. Graceful fallback on failure.
@@ -833,6 +873,9 @@ Respond with a JSON object ONLY — no text outside the JSON:
             // F-02: use the session's adapter, not hardcoded ollamaAdapter
             const adapter = this.getAdapter(provider, apiKey);
 
+            // Budget cap: skip the paid synthesis call — the catch block sends the free fallback report.
+            if (await this.budgetExceeded(model) != null) throw new Error('Budget reached — skipping synthesis call');
+
             const result = await withRetry(() =>
                 this.llmQueue.run(() => adapter.complete({
                     model,
@@ -955,6 +998,14 @@ Respond with a JSON object ONLY — no text outside the JSON:
 
     public async getCosts(): Promise<any> {
         try { return await this.memoryStore.getCostsData(); } catch { return []; }
+    }
+
+    public async getSettings(): Promise<{ budgetUsd: number | null }> {
+        return { budgetUsd: await this.memoryStore.getBudgetUsd() };
+    }
+
+    public async setBudgetUsd(value: number | null): Promise<void> {
+        await this.memoryStore.setSetting('budget_usd', value == null ? null : String(value));
     }
 
     // ─── COLYSEUS CALLBACKS ──────────────────────────────────────────────────

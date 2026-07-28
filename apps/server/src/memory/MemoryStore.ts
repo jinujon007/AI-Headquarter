@@ -18,11 +18,31 @@ const MODEL_PRICING: [string, number, number][] = [
     ['gemini', 0.10, 0.40],
 ];
 
-function costOf(model: string | null, promptTokens: number, completionTokens: number): number {
+export function costOf(model: string | null, promptTokens: number, completionTokens: number): number {
     const name = (model || '').toLowerCase();
     const entry = MODEL_PRICING.find(([prefix]) => name.startsWith(prefix));
     if (!entry) return 0; // Unknown models default to free — assumed local/self-hosted.
     return (promptTokens * entry[1] + completionTokens * entry[2]) / 1_000_000;
+}
+
+// Rough pre-run cost estimate: delegate count × avg tokens per specialist call.
+// Defaults to 2k-in/1k-out per call when no usage history exists.
+export function estimateRunCost(
+    delegateCount: number,
+    model: string,
+    avg?: { prompt: number; completion: number } | null,
+): number {
+    const prompt = avg?.prompt || 2000;
+    const completion = avg?.completion || 1000;
+    return delegateCount * costOf(model, prompt, completion);
+}
+
+// True when a paid model must be refused because month-to-date spend hit the cap.
+// No cap set → unlimited (current behavior). Free/local models are never blocked.
+export function budgetBlocks(model: string, budgetUsd: number | null, spentUsd: number): boolean {
+    if (budgetUsd == null) return false;
+    if (costOf(model, 1_000_000, 1_000_000) === 0) return false;
+    return spentUsd >= budgetUsd;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {
@@ -83,6 +103,11 @@ export class MemoryStore {
                 layout_json TEXT NOT NULL,
                 name TEXT NOT NULL DEFAULT 'default',
                 updated_at TEXT DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             );
 
             CREATE TABLE IF NOT EXISTS usage_log (
@@ -260,8 +285,61 @@ export class MemoryStore {
         if (this.db) await this.db.close();
     }
 
+    // --- Settings ---
+
+    async getSetting(key: string): Promise<string | null> {
+        if (!this.db) return null;
+        const row = await this.db.get('SELECT value FROM settings WHERE key = ?', [key]);
+        return row?.value ?? null;
+    }
+
+    async setSetting(key: string, value: string | null): Promise<void> {
+        if (!this.db) return;
+        if (value === null || value === '') {
+            await this.db.run('DELETE FROM settings WHERE key = ?', [key]);
+        } else {
+            await this.db.run(
+                'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+                [key, value]
+            );
+        }
+    }
+
+    // Monthly budget cap in USD. Settings value wins, then AIHQ_BUDGET_USD env, else no cap.
+    async getBudgetUsd(): Promise<number | null> {
+        const stored = await this.getSetting('budget_usd');
+        const raw = stored ?? process.env.AIHQ_BUDGET_USD;
+        if (raw == null || raw === '') return null;
+        const n = Number(raw);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    }
+
+    async getMonthToDateSpend(): Promise<number> {
+        if (!this.db) return 0;
+        const thisMonth = new Date().toISOString().substring(0, 7);
+        const rows = await this.db.all(`
+            SELECT model, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens
+            FROM usage_log
+            WHERE strftime('%Y-%m', created_at) = ?
+            GROUP BY model
+        `, [thisMonth]);
+        return rows.reduce((acc: number, r: any) => acc + costOf(r.model, r.prompt_tokens || 0, r.completion_tokens || 0), 0);
+    }
+
+    // Average tokens per logged LLM call, for the pre-run estimate. Null with no history.
+    async getAvgTokensPerCall(): Promise<{ prompt: number; completion: number } | null> {
+        if (!this.db) return null;
+        const row = await this.db.get(`
+            SELECT AVG(prompt_tokens) as prompt, AVG(completion_tokens) as completion
+            FROM (SELECT prompt_tokens, completion_tokens FROM usage_log ORDER BY id DESC LIMIT 200)
+            WHERE prompt_tokens > 0
+        `);
+        if (!row || !row.prompt) return null;
+        return { prompt: Math.round(row.prompt), completion: Math.round(row.completion || 0) };
+    }
+
     // --- Usage Tracking ---
-    
+
     async logUsage(sessionId: string, agentId: string, taskId: number, model: string, promptTokens: number, completionTokens: number): Promise<void> {
         if (!this.db) return;
         await this.db.run(
@@ -355,7 +433,7 @@ export class MemoryStore {
             thisMonth: thisMonthCost,
             lastMonth: toCost(lastMonthRows),
             projected: thisMonthCost + (dailyAvg * daysRemaining),
-            budget: 100.0,
+            budget: await this.getBudgetUsd(),
             byAgent,
             byModel,
             daily,
@@ -370,7 +448,7 @@ export class MemoryStore {
             thisMonth: 0,
             lastMonth: 0,
             projected: 0,
-            budget: 100,
+            budget: null,
             byAgent: [],
             byModel: [],
             daily: [],

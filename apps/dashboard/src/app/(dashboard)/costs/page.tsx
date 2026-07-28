@@ -10,7 +10,7 @@ interface CostData {
   thisMonth: number;
   lastMonth: number;
   projected: number;
-  budget: number;
+  budget: number | null;
   byAgent: Array<{ agent: string; cost: number; tokens: number }>;
   byModel: Array<{ model: string; cost: number; tokens: number }>;
   daily: Array<{ date: string; cost: number; input: number; output: number }>;
@@ -25,7 +25,7 @@ function transformCostsData(serverData: any): CostData {
       thisMonth: 0,
       lastMonth: 0,
       projected: 0,
-      budget: 100,
+      budget: null,
       byAgent: [],
       byModel: [],
       daily: [],
@@ -38,7 +38,7 @@ function transformCostsData(serverData: any): CostData {
     thisMonth: serverData.thisMonth || 0,
     lastMonth: serverData.lastMonth || 0,
     projected: serverData.projected || 0,
-    budget: serverData.budget || 100,
+    budget: typeof serverData.budget === 'number' ? serverData.budget : null,
     byAgent: (serverData.byAgent || []).map((a: any) => ({
       agent: a.agent || a.agent_id || 'unknown',
       cost: a.cost || 0,
@@ -119,7 +119,7 @@ export default function CostsPage() {
     );
   }
 
-  const budgetPercent = costData.budget > 0 ? (costData.thisMonth / costData.budget) * 100 : 0;
+  const budgetPercent = costData.budget != null && costData.budget > 0 ? (costData.thisMonth / costData.budget) * 100 : 0;
   const budgetColor = budgetPercent < 60 ? "var(--success)" : budgetPercent < 85 ? "var(--warning)" : "var(--error)";
   // Guard divide-by-zero: with no spend yesterday/last month the % change is meaningless, show 0
   const todayChange = costData.yesterday > 0 ? ((costData.today - costData.yesterday) / costData.yesterday) * 100 : 0;
@@ -241,18 +241,29 @@ export default function CostsPage() {
               <AlertTriangle className="w-4 h-4" style={{ color: "var(--error)" }} />
             )}
           </div>
-          <div className="text-3xl font-bold" style={{ color: budgetColor }}>
-            {budgetPercent.toFixed(0)}%
-          </div>
-          <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
-            <div
-              className="h-full transition-all duration-500"
-              style={{ width: `${Math.min(budgetPercent, 100)}%`, backgroundColor: budgetColor }}
-            />
-          </div>
-          <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
-            ${costData.thisMonth.toFixed(2)} / ${costData.budget.toFixed(2)}
-          </p>
+          {costData.budget != null ? (
+            <>
+              <div className="text-3xl font-bold" style={{ color: budgetColor }}>
+                {budgetPercent.toFixed(0)}%
+              </div>
+              <div className="mt-2 h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--card-elevated)" }}>
+                <div
+                  className="h-full transition-all duration-500"
+                  style={{ width: `${Math.min(budgetPercent, 100)}%`, backgroundColor: budgetColor }}
+                />
+              </div>
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                ${costData.thisMonth.toFixed(2)} / ${costData.budget.toFixed(2)} month-to-date
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="text-3xl font-bold" style={{ color: "var(--text-muted)" }}>—</div>
+              <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>
+                No cap set — add one in Settings
+              </p>
+            </>
+          )}
         </div>
       </div>
 

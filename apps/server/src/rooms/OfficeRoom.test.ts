@@ -25,6 +25,9 @@ function makeRoom(agents: Record<string, string> = {
     room.memoryStore = {
         saveMemory: jest.fn().mockResolvedValue(undefined),
         logUsage: jest.fn().mockResolvedValue(undefined),
+        getBudgetUsd: jest.fn().mockResolvedValue(null),
+        getMonthToDateSpend: jest.fn().mockResolvedValue(0),
+        getAvgTokensPerCall: jest.fn().mockResolvedValue(null),
     };
     room.taskManager = { createTask: jest.fn().mockResolvedValue(1) };
     room.llmQueue = { run: (fn: () => Promise<any>) => fn() };
@@ -166,6 +169,60 @@ describe('streamCeoMessage', () => {
         expect(room.broadcast).toHaveBeenCalledWith('agent:message',
             expect.objectContaining({ agentId: 'pa', message: honest, targetId: 'ceo' }));
     }, 15000); // withRetry sleeps ~3s across its 3 attempts
+
+    it('refuses a BYOK run when the monthly budget is reached — no LLM call, no delegation', async () => {
+        const room = makeRoom();
+        room.memoryStore.getBudgetUsd = jest.fn().mockResolvedValue(0.01);
+        room.memoryStore.getMonthToDateSpend = jest.fn().mockResolvedValue(5);
+        const complete = jest.fn();
+        room.getAdapter = () => ({ complete });
+        room.delegate = jest.fn();
+        const emit = jest.fn();
+
+        await room.streamCeoMessage('build something', 'anthropic', 'sk-test', emit);
+
+        expect(complete).not.toHaveBeenCalled();
+        expect(room.delegate).not.toHaveBeenCalled();
+        const tokenCall = emit.mock.calls.find((c: any[]) => c[0].type === 'token');
+        expect(tokenCall[0].token).toContain('Monthly budget $0.01 reached');
+        expect(emit).toHaveBeenCalledWith({ type: 'done', agentId: 'pa' });
+    });
+
+    it('appends a cost estimate to the PA reply for BYOK delegations', async () => {
+        const room = makeRoom();
+        room.memoryStore.getAvgTokensPerCall = jest.fn().mockResolvedValue({ prompt: 2000, completion: 1000 });
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '{"reply":"On it.","delegates":["dev"]}',
+                usage: { prompt: 10, completion: 5 },
+            }),
+        });
+        room.delegate = jest.fn().mockResolvedValue(undefined);
+        const emit = jest.fn();
+
+        await room.streamCeoMessage('build a page', 'anthropic', 'sk-test', emit);
+
+        const tokenCall = emit.mock.calls.find((c: any[]) => c[0].type === 'token');
+        // claude default model: 1 delegate × (2000×$3 + 1000×$15)/1M = $0.021 → rendered with 2 decimals
+        expect(tokenCall[0].token).toMatch(/Estimated cost for this run: ~\$0\.02/);
+    });
+
+    it('never mentions cost for free local runs ($0 estimate skipped)', async () => {
+        const room = makeRoom();
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '{"reply":"On it.","delegates":["dev"]}',
+                usage: { prompt: 10, completion: 5 },
+            }),
+        });
+        room.delegate = jest.fn().mockResolvedValue(undefined);
+        const emit = jest.fn();
+
+        await room.streamCeoMessage('build a page', undefined, undefined, emit);
+
+        const tokenCall = emit.mock.calls.find((c: any[]) => c[0].type === 'token');
+        expect(tokenCall[0].token).toBe('On it.');
+    });
 });
 
 describe('buildTeamContext — cross-agent context passing', () => {
