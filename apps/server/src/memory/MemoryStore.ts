@@ -255,6 +255,16 @@ export class MemoryStore {
         );
     }
 
+    // Boot-time recovery: any task still pending/in_progress at startup died with
+    // the previous process — mark it failed so the UI never shows a silent hang.
+    async failStaleTasks(): Promise<number> {
+        if (!this.db) return 0;
+        const result = await this.db.run(
+            "UPDATE tasks SET status = 'failed' WHERE status IN ('pending', 'in_progress', 'in-progress')"
+        );
+        return result.changes || 0;
+    }
+
     async markTaskFailed(taskId: number): Promise<void> {
         if (!this.db) return;
         await this.db.run(

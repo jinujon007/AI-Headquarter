@@ -102,6 +102,30 @@ describe('parseStructuredResponse', () => {
     });
 });
 
+describe('parseStructuredResponse — truncated JSON from small local models', () => {
+    it('repairs JSON missing its closing brace (live run-1 failure shape)', () => {
+        const room = makeRoom();
+        const raw = '{\n  "reply": "Our team is excited to launch the page.",\n  "delegates": ["dev", "copywriter"]';
+        const out = room.parseStructuredResponse(raw);
+        expect(out.reply).toBe('Our team is excited to launch the page.');
+        expect(out.delegates).toEqual(['dev', 'copywriter']);
+    });
+
+    it('repairs JSON with an unterminated string', () => {
+        const room = makeRoom();
+        const raw = '{"reply": "Working on it';
+        const out = room.parseStructuredResponse(raw);
+        expect(out.reply).toBe('Working on it');
+    });
+
+    it('never leaks raw JSON debris to the CEO chat', () => {
+        const room = makeRoom();
+        // Unsalvageable JSON-ish garbage — reply must be a clean sentence, not braces
+        const out = room.parseStructuredResponse('{"rep__garbage: [[[');
+        expect(out.reply.trimStart().startsWith('{')).toBe(false);
+    });
+});
+
 describe('delegate', () => {
     it('sizes the batch from validated delegates only', async () => {
         const room = makeRoom();

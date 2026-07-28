@@ -1,3 +1,4 @@
+import './env'; // must run before anything reads process.env
 import express, { Request, Response, NextFunction } from 'express';
 import { Server, matchMaker } from 'colyseus';
 import { createServer } from 'http';
@@ -41,6 +42,25 @@ function rateLimiter(req: Request, res: Response, next: NextFunction) {
     return;
   }
   next();
+}
+
+// ─── LOG RING BUFFER ─────────────────────────────────────────────────────────
+// Last 500 console lines, served at GET /api/logs — the dashboard Live Logs
+// page reads this. Works on every install (no pm2/journalctl assumptions).
+const LOG_BUFFER_MAX = 500;
+const logBuffer: { ts: string; level: string; line: string }[] = [];
+for (const level of ['log', 'warn', 'error'] as const) {
+  const orig = console[level].bind(console);
+  console[level] = (...args: unknown[]) => {
+    try {
+      const line = args
+        .map(a => typeof a === 'string' ? a : a instanceof Error ? `${a.message}` : JSON.stringify(a))
+        .join(' ');
+      logBuffer.push({ ts: new Date().toISOString(), level, line: line.slice(0, 500) });
+      if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
+    } catch { /* never let logging break the app */ }
+    orig(...args);
+  };
 }
 
 // ─── APP ──────────────────────────────────────────────────────────────────────
@@ -165,6 +185,10 @@ app.get('/api/tasks', async (_req, res) => {
 app.get('/api/costs', async (_req, res) => {
   const room = OfficeRoom.getActiveRoom();
   res.json(room ? await room.getCosts() : {});
+});
+
+app.get('/api/logs', (_req, res) => {
+  res.json(logBuffer);
 });
 
 app.get('/api/settings', async (_req, res) => {

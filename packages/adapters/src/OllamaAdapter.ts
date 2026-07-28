@@ -9,7 +9,9 @@ export class OllamaAdapter implements InferenceAdapter {
     async complete(request: CompletionRequest): Promise<CompletionResponse> {
         const start = Date.now();
         const ac = new AbortController();
-        const timeoutId = setTimeout(() => ac.abort(), 60_000);
+        // CPU-bound local inference can exceed 60s — tunable without a rebuild.
+        const timeoutMs = Number(process.env.OLLAMA_TIMEOUT_MS) || 60_000;
+        const timeoutId = setTimeout(() => ac.abort(), timeoutMs);
         const response = await fetch(`${this.baseUrl}/api/chat`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -19,6 +21,9 @@ export class OllamaAdapter implements InferenceAdapter {
                 messages: request.messages,
                 stream: false,
                 tools: request.tools,
+                // format:"json" makes Ollama constrain decoding to valid JSON —
+                // essential for small local models that otherwise truncate JSON.
+                ...(request.responseFormat === 'json' ? { format: 'json' } : {}),
                 options: { temperature: request.temperature }
             })
         });

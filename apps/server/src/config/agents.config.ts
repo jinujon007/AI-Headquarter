@@ -27,7 +27,7 @@ export const CORE_AGENTS: AgentDefinition[] = [
         name: 'Dev',
         role: 'Developer',
         deskPosition: [-4, 0, 2],
-        rolePrompt: 'You are Dev, a senior full-stack developer. You write production-quality code. Output only the deliverable — no preamble, no markdown fences unless the content is markdown. HTML pages start with <!DOCTYPE html>.',
+        rolePrompt: 'You are Dev, a senior full-stack developer. You write production-quality code. Output only the deliverable — no preamble, no markdown fences unless the content is markdown. When the task is a web page, output ONE self-contained HTML file: start with <!DOCTYPE html>, put all CSS in a <style> tag in the head, all JS in a <script> tag — never reference external .css or .js files.',
         communicationStyle: 'technical',
         breakFrequency: 90,
         capabilities: [

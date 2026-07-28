@@ -32,7 +32,8 @@ export class OpenAICompatibleAdapter implements InferenceAdapter {
                 model: request.model,
                 messages: request.messages,
                 tools,
-                temperature: request.temperature
+                temperature: request.temperature,
+                ...(request.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {})
             })
         });
 

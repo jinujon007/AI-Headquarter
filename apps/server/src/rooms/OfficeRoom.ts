@@ -176,6 +176,9 @@ export class OfficeRoom extends Room<OfficeState> {
 
         await this.memoryStore.initialize();
 
+        const stale = await this.memoryStore.failStaleTasks();
+        if (stale > 0) console.log(`[OfficeRoom] Marked ${stale} stale task(s) from a previous run as failed`);
+
         const recentTasks = await this.memoryStore.getRecentTasks(50);
         console.log(`[OfficeRoom] Restored ${recentTasks.length} tasks from previous sessions`);
 
@@ -461,7 +464,13 @@ Respond with a JSON object ONLY — no text outside the JSON:
 {
   "reply": "2-3 sentence natural response to the CEO",
   "delegates": ["array of specialist IDs to assign work — use the exact ids: ${rosterIds} — empty array if no delegation needed"]
-}`;
+}
+
+Example — CEO says "Build me a landing page for my bakery":
+{"reply": "On it. Ray will research the market, Cleo will write the copy, and Dev will build the page.", "delegates": ["researcher", "copywriter", "dev"]}
+
+Example — CEO says "thanks, looks great":
+{"reply": "Glad you like it. Say the word when you want the next thing built.", "delegates": []}`;
 
         let fullResponse = '';
         let delegates: string[] = [];
@@ -492,6 +501,7 @@ Respond with a JSON object ONLY — no text outside the JSON:
                     model,
                     messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content }],
                     temperature: 0.4,
+                    responseFormat: 'json',
                 }))
             );
             const raw = result.content?.trim() || '';
@@ -549,20 +559,53 @@ Respond with a JSON object ONLY — no text outside the JSON:
     }
 
     private parseStructuredResponse(raw: string): { reply: string; delegates: string[] } | null {
-        try {
-            const match = raw.match(/\{[\s\S]*\}/);
-            if (!match) return null;
-            const parsed = JSON.parse(match[0]);
-            if (typeof parsed.reply === 'string') {
-                const delegates = Array.isArray(parsed.delegates)
-                    ? parsed.delegates.filter((d: unknown) => typeof d === 'string')
-                    : [];
-                return { reply: parsed.reply, delegates: this.normalizeDelegates(delegates) };
+        // Try strict parse first, then brace-repaired parse — small local models
+        // regularly stop before closing the JSON object.
+        const match = raw.match(/\{[\s\S]*\}/) || raw.match(/\{[\s\S]*/);
+        if (!match) return null; // no JSON at all — caller streams the raw text
+        {
+            for (const candidate of [match[0], this.repairJson(match[0])]) {
+                try {
+                    const parsed = JSON.parse(candidate);
+                    if (typeof parsed.reply === 'string') {
+                        const delegates = Array.isArray(parsed.delegates)
+                            ? parsed.delegates.filter((d: unknown) => typeof d === 'string')
+                            : [];
+                        return { reply: parsed.reply, delegates: this.normalizeDelegates(delegates) };
+                    }
+                } catch { /* try next candidate */ }
             }
-        } catch { /* fall through */ }
-        // Fallback: substring match on the raw text
+        }
+        // Fallback: substring match on the raw text. HONESTY RULE: never show raw
+        // JSON debris to the CEO — salvage the reply field or use a clean line.
         const fb = this.fallbackSubstringDelegate(raw);
-        return { reply: fb.reply, delegates: this.normalizeDelegates(fb.delegates) };
+        let reply = fb.reply;
+        if (reply.trimStart().startsWith('{')) {
+            const replyField = raw.match(/"reply"\s*:\s*"((?:[^"\\]|\\.)*)"?/);
+            reply = replyField ? replyField[1].replace(/\\"/g, '"') : 'On it — delegating to the team now.';
+        }
+        return { reply, delegates: this.normalizeDelegates(fb.delegates) };
+    }
+
+    // Append the closing brackets/braces a truncated JSON object is missing.
+    private repairJson(s: string): string {
+        let out = s.trim();
+        // Close an unterminated string first
+        const quotes = (out.match(/(?<!\\)"/g) || []).length;
+        if (quotes % 2 === 1) out += '"';
+        const stack: string[] = [];
+        let inStr = false;
+        for (let i = 0; i < out.length; i++) {
+            const c = out[i];
+            if (inStr) {
+                if (c === '\\') i++;
+                else if (c === '"') inStr = false;
+            } else if (c === '"') inStr = true;
+            else if (c === '{' || c === '[') stack.push(c);
+            else if (c === '}' || c === ']') stack.pop();
+        }
+        while (stack.length) out += stack.pop() === '{' ? '}' : ']';
+        return out;
     }
 
     private fallbackSubstringDelegate(text: string): { reply: string; delegates: string[] } {
@@ -815,6 +858,7 @@ Respond with a JSON object ONLY — no text outside the JSON:
             if (BOARD_SEATS[i]) seatAssignments[p] = BOARD_SEATS[i];
         });
 
+        console.log(`[Board] Wrapup meeting: ${participants.join(', ')} — topic: ${topic.slice(0, 60)}`);
         this.broadcast('board:started', { type: 'board:started', participants, topic, seatAssignments });
 
         participants.forEach((p, i) => {
@@ -891,6 +935,7 @@ Respond with a JSON object ONLY — no text outside the JSON:
 
             const report = result.content.trim() || `All ${taskTitles.length} tasks completed. Check the Tasks page for output files.`;
 
+            console.log(`[PA] Completion report sent to CEO (${taskTitles.length} task(s))`);
             this.broadcast('agent:message', {
                 type: 'agent:message', agentId: 'pa', message: report, targetId: 'ceo', isReport: true,
             });
