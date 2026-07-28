@@ -1,6 +1,10 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
+  // The e2e suite makes real HTTP requests; undici's keep-alive sockets hold the
+  // event loop open for a few seconds after the run. Everything is asserted and
+  // awaited before teardown — forceExit only skips that idle socket wait.
+  forceExit: true,
   roots: ['<rootDir>/src'],
   testMatch: ['**/*.test.ts'],
   moduleFileExtensions: ['ts', 'js', 'json'],

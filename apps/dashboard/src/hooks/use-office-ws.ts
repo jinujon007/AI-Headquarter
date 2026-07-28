@@ -36,16 +36,9 @@ export interface AgentHiredEvent {
   deskPosition: [number, number, number];
 }
 
-export interface TaskEvent {
-  id: string;
-  title: string;
-  agentId: string;
-  status: "created" | "completed" | "failed";
-  output?: string;
-  outputPath?: string;
-  error?: string;
-  timestamp: number;
-}
+import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks } from "./office-ws-handlers";
+export type { TaskEvent } from "./office-ws-handlers";
+import type { TaskEvent } from "./office-ws-handlers";
 
 export interface BoardMeetingState {
   active: boolean;
@@ -172,29 +165,12 @@ export function useOfficeWs() {
       });
 
       room.onMessage("task:created", (data: TaskCreatedPayload) => {
-        const t = (data.task || data) as TaskCreatedPayload["task"] & { agentId?: string };
-        setState((prev) => ({
-          ...prev,
-          tasks: [{
-            id: t.id || `task_${Date.now()}`,
-            title: t.title || "Untitled",
-            agentId: t.assignedTo || t.agentId || "unknown",
-            status: "created" as const,
-            timestamp: Date.now(),
-          }, ...prev.tasks].slice(0, 100),
-        }));
+        setState((prev) => ({ ...prev, tasks: applyTaskCreated(prev.tasks, data, Date.now()) }));
       });
 
       room.onMessage("task:completed", (data: TaskCompletedPayload) => {
-        const t = (data.task || data) as TaskCompletedPayload["task"] & { agentId?: string; output?: string };
-        setState((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((task) =>
-            task.id === t.id
-              ? { ...task, status: "completed" as const, outputPath: t.outputPath || t.output || undefined }
-              : task
-          ),
-        }));
+        const t = (data.task || data) as TaskCompletedPayload["task"] & { agentId?: string };
+        setState((prev) => ({ ...prev, tasks: applyTaskCompleted(prev.tasks, data) }));
         logActivity(
           "task",
           `Completed: ${t.title || t.id}`,
@@ -205,14 +181,7 @@ export function useOfficeWs() {
 
       room.onMessage("task:failed", (data: TaskFailedPayload) => {
         const t = (data.task || data) as TaskFailedPayload["task"] & { agentId?: string };
-        setState((prev) => ({
-          ...prev,
-          tasks: prev.tasks.map((task) =>
-            task.id === t.id
-              ? { ...task, status: "failed" as const, error: t.error }
-              : task
-          ),
-        }));
+        setState((prev) => ({ ...prev, tasks: applyTaskFailed(prev.tasks, data) }));
         logActivity(
           "task",
           `Failed: ${t.title || t.id}${t.error ? ` — ${String(t.error).slice(0, 100)}` : ""}`,
@@ -225,18 +194,7 @@ export function useOfficeWs() {
       // sync data is dropped (and colyseus.js logs 'onMessage() not registered').
       room.onMessage("tasks-sync", (tasks: Array<{ id: number; title: string; assignedTo: string; status: string; completedAt?: string }>) => {
         if (!Array.isArray(tasks)) return;
-        setState((prev) => ({
-          ...prev,
-          tasks: tasks.map((t) => ({
-            id: `task_${t.id}`,
-            title: t.title || "Untitled",
-            agentId: t.assignedTo || "unknown",
-            status: t.status === "completed" ? ("completed" as const)
-              : t.status === "failed" ? ("failed" as const)
-              : ("created" as const),
-            timestamp: Date.now(),
-          })).slice(0, 100),
-        }));
+        setState((prev) => ({ ...prev, tasks: mapSyncTasks(tasks, Date.now()) }));
       });
 
       room.onMessage("agents-sync", (agents: Array<{ id: string; status: AgentStatusPayload["status"] }>) => {
