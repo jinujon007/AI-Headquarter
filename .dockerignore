@@ -10,6 +10,10 @@ data/
 **/*.log
 dist/
 **/dist/
+# Stale build-state files make composite tsc skip emit inside the image
+# (dist/ is excluded above, so "up to date" would mean "no output at all")
+*.tsbuildinfo
+**/*.tsbuildinfo
 .next/
 **/.next/
 *.md

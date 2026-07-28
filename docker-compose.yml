@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   server:
@@ -10,7 +9,10 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      # Deliberately NOT ${OLLAMA_URL:...}: the root .env sets that to localhost for
+      # bare-metal dev, and compose would leak it into the container where localhost
+      # is the container itself. Override with OLLAMA_URL_DOCKER if Ollama runs elsewhere.
+      - OLLAMA_URL=${OLLAMA_URL_DOCKER:-http://host.docker.internal:11434}
       - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.2:3b}
     volumes:
       - ./output:/app/output

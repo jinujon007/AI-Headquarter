@@ -26,6 +26,8 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000). Login with `ADMIN_PASSWORD`.
 
+Fresh-clone path verified 2026-07-28: clone → install → boot → first PA reply in ~2 minutes (excluding the one-time Node install and `ollama pull`).
+
 **Ports:**
 - `3000` — dashboard (Next.js)
 - `3001` — server (Colyseus + Express)
@@ -48,8 +50,13 @@ ollama serve           # in a separate terminal
 ollama pull llama3.2:3b
 
 # The server container connects to Ollama at host.docker.internal:11434 by default.
-# Override with OLLAMA_URL=http://your-ollama-host:11434 in .env
+# Override with OLLAMA_URL_DOCKER=http://your-ollama-host:11434 in .env
+# (a separate variable — the bare-metal OLLAMA_URL=localhost must not leak into the container)
 ```
+
+**Windows note:** Ollama listens on `127.0.0.1` only by default, which Docker containers cannot reach. Set the `OLLAMA_HOST=0.0.0.0` environment variable before starting Ollama (System Settings → Environment Variables, or `$env:OLLAMA_HOST="0.0.0.0"; ollama serve`).
+
+Docker path verified on: 2026-07-28 (compose build + up healthy, login OK, CEO command answered by host Ollama from inside the container).
 
 **Data persistence:** The `output/` and `data/` directories are mounted as Docker volumes — agent outputs and memories survive container restarts.
 
@@ -81,6 +88,8 @@ Railway does not provide GPU instances. For best performance with local models, 
 | `ALLOWED_ORIGIN` | — | `http://localhost:3000` | CORS allowed origin (set for public deploy) |
 | `AIHQ_SERVER_KEY` | — | *(unset = open mode)* | Auth key required on mutating endpoints (`/api/ceo/message`, `/api/agents/hire`). Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`. Leave unset for local dev. |
 | `PORT` | — | `3001` | Server port |
+| `OLLAMA_TIMEOUT_MS` | — | `60000` | LLM call timeout. Raise to `120000`+ on CPU-only machines — slow generations otherwise abort with an honest task failure |
+| `AIHQ_BUDGET_USD` | — | *(no cap)* | Monthly BYOK budget cap in USD. The dashboard Settings value overrides this. Paid calls are refused once month-to-date spend reaches the cap |
 | `TAVILY_API_KEY` | — | — | Enables real web search (free tier at tavily.com) |
 
 BYOK API keys are **not** set as environment variables — they're entered in the dashboard Settings page per-session.

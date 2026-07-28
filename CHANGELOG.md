@@ -8,6 +8,40 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+### Completion Sprint — live-verified core loop [Brain: Claude Fable] [2026-07-28]
+
+**Verified live (first time ever with a real LLM)**
+- 12 live demo runs on default `llama3.2:3b`: 11 fully clean, 1 honest timeout failure (task marked failed + toast — no silent hang). 10-run blind quality log written; median 5/10 → BYOK-first UX shipped
+- Hired-agent loop live: UI hire, chat hire, delegation to hired agent with real output file
+- Budget cap live: $0.01 cap + simulated spend → paid call refused with honest message before any API call; free Ollama never blocked
+
+**Added**
+- Chat-driven hiring: PA JSON schema gains optional `hire:{name,role}`; "hire a financial analyst" in chat spawns a real agent + desk (README already claimed this)
+- Pre-run cost estimate in the PA acknowledgment for BYOK runs (delegate count × avg tokens from usage history, priced per model)
+- Monthly budget cap: settings-persisted `budget_usd` (+ `AIHQ_BUDGET_USD` env), refusal paths on PA/specialist/synthesis calls, Settings field, month-to-date vs budget bar on costs page
+- `GET/POST /api/settings`, `GET /api/logs` (server console ring buffer, last 500 lines)
+- Preview-quality banner (Ollama up, no BYOK key) + README preview-quality label with measured median
+- Zero-dep root `.env` loaders in server and next.config — the file README tells users to create is now actually read
+- `OLLAMA_TIMEOUT_MS` env for slow CPU inference (default 60s)
+- E2E demo-path test (real HTTP + SQLite + ToolExecutor, stubbed adapter; asserts SSE order, task completion, output file, board wrapup, PA report)
+- Dashboard vitest smoke suite (11 tests: activities-db, costs proxy, extracted WS task handlers)
+- `TESTING_GUIDE.md` for non-coder testing; boot-time stale-task cleanup (crashed runs can't leave tasks hanging)
+
+**Fixed**
+- Small-model JSON survival: Ollama `format:json` + OpenAI `response_format` on PA calls; parser repairs truncated JSON, honors delegates/hire when `reply` is omitted, never leaks raw JSON to chat (live run-1 and chat-hire failures, regression-tested)
+- sessionProvider no longer persists from a budget-refused BYOK attempt
+- StatusBar SERVER light read a nonexistent field (always green) — wired to the real health check
+- Dev role prompt: one self-contained HTML file (inline CSS/JS); Cleo: markdown copy only
+- Costs page NaN% in per-agent breakdown at $0 total
+
+**Removed / replaced (honesty sweep)**
+- Live Logs pm2/journalctl SSE page (dead on Windows/normal installs) → ring-buffer polling page
+- `/api/agents/[id]/status` hardcoded placeholder route (zero callers)
+- `/api/system/services` fork-leftover exec route (pm2/systemctl/docker, foreign allowlists) + dead action buttons
+- Fake per-core CPU (Math.random), hardcoded Tailscale/UFW cards, `vpnActive = true // We know it's active`
+- CLAUDE.md per-agent LLM claim corrected to global-per-session; api.md synced to real SSE/task/costs shapes; phantom `ceo:message` WS handler removed from docs
+- TenacitOS component dir renamed Shell (attribution retained)
+
 ### Launch Hardening Sprint [Brain: Claude Fable] [2026-07-15]
 
 **Added**

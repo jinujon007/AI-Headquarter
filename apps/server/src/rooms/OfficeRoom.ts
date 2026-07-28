@@ -528,8 +528,10 @@ Example — CEO says "thanks, looks great":
             }
             emit({ type: 'token', agentId: 'pa', token: fullResponse });
             emit({ type: 'done', agentId: 'pa' });
-        } catch {
-            // Honest failure — do NOT pretend work is being delegated
+        } catch (err) {
+            // Honest failure — do NOT pretend work is being delegated. Log the real
+            // cause for operators (this feeds /api/logs and the dashboard Logs page).
+            console.error('[PA] model call failed:', err instanceof Error ? `${err.message}${err.cause ? ` (${err.cause})` : ''}` : err);
             fullResponse = 'Could not reach the model — check that Ollama is running, or configure an API key in Settings.';
             emit({ type: 'token', agentId: 'pa', token: fullResponse });
             emit({ type: 'done', agentId: 'pa' });
