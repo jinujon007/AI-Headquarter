@@ -60,6 +60,7 @@ in chat, and future relevant commands can be routed to her.
 | Symptom | Meaning | First move |
 |---------|---------|-----------|
 | Chat replies "Could not reach the model…" | Ollama isn't running or the model isn't pulled | `ollama serve`, then `ollama pull llama3.2:3b` |
+| Same message, but Ollama **is** running and the model **is** pulled | Your machine is out of free RAM — Ollama needs ~3 GB free to load a 3B model, and it fails even when the GPU is idle | Close heavy apps (editors and browsers are usually the culprit) and retry. Check with `ollama run llama3.2:3b "hi"` — if that errors with `failed to allocate`, it's RAM, not AI HQ. Falling back to the smaller `llama3.2:1b` also works, at lower output quality |
 | A task shows **failed** with a toast | The model gave an empty/broken answer — this is honest failure, not a hang | Send the command again |
 | A task sits in progress for 10+ minutes | Genuine bug — this should never happen | Restart with `npm run dev`; old stuck tasks auto-mark as failed |
 | Raw `{"reply": ...` JSON in chat | Parser bug — should never happen | Report it (below) with a screenshot |
