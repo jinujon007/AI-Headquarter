@@ -820,12 +820,21 @@ Example — CEO says "thanks, looks great":
                 content: deliverable, agentId, filename: taskTitle.slice(0, 40), extension: ext,
             });
 
-            // Persist token usage
+            // Persist token usage first — the model call happened and cost real money
+            // even if writing the deliverable to disk then fails.
             await this.memoryStore.logUsage(this.sessionId, agentId, taskId, model, result.usage?.prompt || 0, result.usage?.completion || 0);
 
-            const outputPath = toolResult.success
-                ? toolResult.output.replace('File written: ', '').trim()
-                : undefined;
+            // A task whose file never landed is a failed task. This previously fell
+            // through to completeTask() with an undefined path and told the CEO
+            // "Task complete." — the whole promise of the product is real output files.
+            // A task whose file never landed is a failed task. This previously fell
+            // through to completeTask() with an undefined path and told the CEO
+            // "Task complete." — the whole promise of the product is real output files.
+            if (!toolResult.success) {
+                throw new Error(`Could not write the deliverable: ${toolResult.error || 'unknown write error'}`);
+            }
+
+            const outputPath = toolResult.output.replace('File written: ', '').trim();
 
             await this.taskManager.completeTask(taskId, outputPath);
             agent.currentTask = '';
@@ -847,7 +856,7 @@ Example — CEO says "thanks, looks great":
             this.broadcast('agent:status', { type: 'agent:status', agentId, status: 'idle' });
             this.broadcast('agent:message', {
                 type: 'agent:message', agentId,
-                message: toolResult.success ? `Done. Output at: ${outputPath}` : 'Task complete.',
+                message: `Done. Output at: ${outputPath}`,
                 targetId: 'pa',
             });
 

@@ -374,3 +374,51 @@ describe('hireAgent — office capacity', () => {
         expect(room.hireCount).toBe(6);
     });
 });
+
+describe('runSpecialistTask — a deliverable that never lands is a failed task', () => {
+    // Regression: a failed write_file fell through to completeTask() with an undefined
+    // path and broadcast task:completed + "Task complete." The product's entire promise
+    // is real output files, so a silent write failure is the worst possible lie.
+    function makeSpecialistRoom(writeSucceeds: boolean) {
+        const room = makeRoom();
+        room.sessionProvider = undefined;
+        room.sessionApiKey = undefined;
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '# Landing page copy',
+                usage: { prompt: 10, completion: 20 },
+            }),
+        });
+        room.toolExecutor = {
+            execute: jest.fn().mockResolvedValue(
+                writeSucceeds
+                    ? { success: true, output: 'File written: output/copywriter/page.md' }
+                    : { success: false, output: '', error: 'EACCES: permission denied' },
+            ),
+        };
+        room.taskManager.completeTask = jest.fn().mockResolvedValue(undefined);
+        room.taskManager.markTaskFailed = jest.fn().mockResolvedValue(undefined);
+        return room;
+    }
+
+    const broadcastTypes = (room: any) => room.broadcast.mock.calls.map(([t]: any[]) => t);
+
+    it('marks the task failed when the file cannot be written', async () => {
+        const room = makeSpecialistRoom(false);
+        await room.runSpecialistTask('copywriter', 1, 'Write the copy', undefined, undefined, undefined, []);
+
+        expect(room.taskManager.markTaskFailed).toHaveBeenCalledWith(1);
+        expect(room.taskManager.completeTask).not.toHaveBeenCalled();
+        expect(broadcastTypes(room)).toContain('task:failed');
+        expect(broadcastTypes(room)).not.toContain('task:completed');
+    });
+
+    it('completes normally when the file is written', async () => {
+        const room = makeSpecialistRoom(true);
+        await room.runSpecialistTask('copywriter', 1, 'Write the copy', undefined, undefined, undefined, []);
+
+        expect(room.taskManager.completeTask).toHaveBeenCalledWith(1, 'output/copywriter/page.md');
+        expect(room.taskManager.markTaskFailed).not.toHaveBeenCalled();
+        expect(broadcastTypes(room)).toContain('task:completed');
+    });
+});
