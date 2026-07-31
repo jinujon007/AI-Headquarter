@@ -68,7 +68,11 @@ for (const level of ['log', 'warn', 'error'] as const) {
       const line = args
         .map(a => typeof a === 'string' ? a : a instanceof Error ? `${a.message}` : JSON.stringify(a))
         .join(' ');
-      logBuffer.push({ ts: new Date().toISOString(), level, line: line.slice(0, 500) });
+      // Sanitise at the choke point. Agent names, model errors and CEO text all reach
+      // this buffer, and /api/logs serves it straight to the dashboard — a newline in
+      // any of them would forge extra log entries. One guard here covers every caller.
+      const safe = line.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[\u0000-\u001F\u007F]/g, '');
+      logBuffer.push({ ts: new Date().toISOString(), level, line: safe.slice(0, 500) });
       if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
     } catch { /* never let logging break the app */ }
     orig(...args);

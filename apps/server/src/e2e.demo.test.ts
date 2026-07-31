@@ -199,6 +199,30 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
         expect(res.status).toBe(503);
         (OfficeRoom as any).activeRoom = room;
     });
+    describe('GET /api/logs - log injection', () => {
+        // Agent names, model errors and CEO text all reach the console ring buffer, and
+        // /api/logs serves it straight to the dashboard. A newline in any of them would
+        // forge extra entries, so the buffer sanitises at the choke point.
+        it('collapses newlines and control characters into a single entry', async () => {
+            const LF = String.fromCharCode(10);
+            const CR = String.fromCharCode(13);
+            const NUL = String.fromCharCode(0);
+            console.log('[test] start' + LF + '[FORGED] admin granted' + CR + LF + 'second' + NUL + 'forged');
+
+            const res = await fetch(`${baseUrl}/api/logs`);
+            const entries: Array<{ line: string }> = await res.json();
+
+            expect(entries.filter(e => e.line.startsWith('[FORGED]'))).toHaveLength(0);
+
+            const real = entries.find(e => e.line.includes('[test] start'));
+            expect(real).toBeDefined();
+            expect(real!.line).toContain('[FORGED] admin granted');
+            expect(real!.line.includes(LF)).toBe(false);
+            expect(real!.line.includes(CR)).toBe(false);
+            expect(real!.line.includes(NUL)).toBe(false);
+        });
+    });
+
     describe('GET /api/output containment', () => {
         const cases: Array<[string, string]> = [
             ['rejects a parent-directory traversal', '../../package.json'],
