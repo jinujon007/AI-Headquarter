@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { OfficeRoom } from './rooms/OfficeRoom';
 import * as os from 'os';
 import path from 'path';
-import { readFile } from 'fs/promises';
+import { readFile, realpath } from 'fs/promises';
 
 // ─── RATE LIMITER ────────────────────────────────────────────────────────────
 interface RateLimitEntry { count: number; resetTime: number; }
@@ -20,29 +20,41 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
-function checkRateLimit(clientId: string): { allowed: boolean; remaining: number } {
+// Reads are cheap and the UI makes them in bursts — opening six task outputs in a
+// row is normal use, not abuse. Only the expensive paths (LLM calls, hiring,
+// settings writes) get the strict budget.
+const READ_RATE_LIMIT = 60;
+
+function checkRateLimit(clientId: string, limit: number): { allowed: boolean; remaining: number } {
   const now = Date.now();
   const entry = rateLimitMap.get(clientId);
   if (!entry || now > entry.resetTime) {
     rateLimitMap.set(clientId, { count: 1, resetTime: now + RATE_WINDOW_MS });
-    return { allowed: true, remaining: RATE_LIMIT - 1 };
+    return { allowed: true, remaining: limit - 1 };
   }
-  if (entry.count >= RATE_LIMIT) return { allowed: false, remaining: 0 };
+  if (entry.count >= limit) return { allowed: false, remaining: 0 };
   entry.count++;
-  return { allowed: true, remaining: RATE_LIMIT - entry.count };
+  return { allowed: true, remaining: limit - entry.count };
 }
 
 // req.ip is already proxy-aware via app.set('trust proxy', 1) — never trust
 // X-Forwarded-For directly, it is spoofable when the server is exposed raw.
-function rateLimiter(req: Request, res: Response, next: NextFunction) {
-  const { allowed, remaining } = checkRateLimit(req.ip || 'unknown');
-  res.setHeader('X-RateLimit-Remaining', remaining.toString());
-  if (!allowed) {
-    res.status(429).json({ ok: false, error: 'Rate limit exceeded. Wait before sending another message.' });
-    return;
-  }
-  next();
+function makeRateLimiter(limit: number, bucket: string) {
+  return function rateLimit(req: Request, res: Response, next: NextFunction) {
+    // Separate bucket per tier, so a burst of cheap reads cannot exhaust the
+    // allowance for CEO messages (and vice versa).
+    const { allowed, remaining } = checkRateLimit(`${bucket}:${req.ip || 'unknown'}`, limit);
+    res.setHeader('X-RateLimit-Remaining', remaining.toString());
+    if (!allowed) {
+      res.status(429).json({ ok: false, error: 'Rate limit exceeded. Wait before trying again.' });
+      return;
+    }
+    next();
+  };
 }
+
+const rateLimiter = makeRateLimiter(RATE_LIMIT, 'write');
+const readRateLimiter = makeRateLimiter(READ_RATE_LIMIT, 'read');
 
 // ─── LOG RING BUFFER ─────────────────────────────────────────────────────────
 // Last 500 console lines, served at GET /api/logs — the dashboard Live Logs
@@ -56,7 +68,11 @@ for (const level of ['log', 'warn', 'error'] as const) {
       const line = args
         .map(a => typeof a === 'string' ? a : a instanceof Error ? `${a.message}` : JSON.stringify(a))
         .join(' ');
-      logBuffer.push({ ts: new Date().toISOString(), level, line: line.slice(0, 500) });
+      // Sanitise at the choke point. Agent names, model errors and CEO text all reach
+      // this buffer, and /api/logs serves it straight to the dashboard — a newline in
+      // any of them would forge extra log entries. One guard here covers every caller.
+      const safe = line.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[\u0000-\u001F\u007F]/g, '');
+      logBuffer.push({ ts: new Date().toISOString(), level, line: safe.slice(0, 500) });
       if (logBuffer.length > LOG_BUFFER_MAX) logBuffer.shift();
     } catch { /* never let logging break the app */ }
     orig(...args);
@@ -103,6 +119,12 @@ function requireServerKey(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// True when `target` is the directory `root` itself or something beneath it.
+// Compared on resolved absolute paths — never on the raw request string.
+function isInside(target: string, root: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
+}
+
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
@@ -129,7 +151,7 @@ app.get('/api/agents', (_req, res) => {
   res.json(room ? room.getAgentList() : []);
 });
 
-app.post('/api/agents/hire', requireServerKey, rateLimiter, (req, res) => {
+app.post('/api/agents/hire', requireServerKey, rateLimiter, async (req, res) => {
   const room = OfficeRoom.getActiveRoom();
   if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
   const { name, role } = req.body || {};
@@ -142,7 +164,15 @@ app.post('/api/agents/hire', requireServerKey, rateLimiter, (req, res) => {
   }
   const provider = req.headers['x-llm-provider'] as string | undefined;
   const apiKey   = req.headers['x-api-key']     as string | undefined;
-  const agent = room.hireAgent(name, role, provider, apiKey);
+  const agent = await room.hireAgent(name, role, provider, apiKey);
+  // hireAgent refuses by returning { error, code }. Reporting that as ok:true made the
+  // dashboard show a successful hire for an agent that never existed.
+  // 409 = office is full (a client-side conflict); 502 = the agent could not initialize
+  // because the model provider was unreachable (an upstream failure).
+  if (agent?.error) {
+    res.status(agent.code === 'office_full' ? 409 : 502).json({ ok: false, error: agent.error });
+    return;
+  }
   res.json({ ok: true, agent });
 });
 
@@ -197,7 +227,7 @@ app.get('/api/settings', async (_req, res) => {
   res.json({ ok: true, ...(await room.getSettings()) });
 });
 
-app.post('/api/settings', requireServerKey, async (req, res) => {
+app.post('/api/settings', requireServerKey, rateLimiter, async (req, res) => {
   const room = OfficeRoom.getActiveRoom();
   if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
   const { budgetUsd } = req.body || {};
@@ -214,16 +244,25 @@ app.get('/api/system', (_req, res) => {
   res.json({ cpu: Math.round(os.loadavg()[0] * 100) / 100, ram: Math.round(((totalMem - freeMem) / totalMem) * 100), disk: 0 });
 });
 
-app.get('/api/output', async (req, res) => {
+// Rate-limited: this reads files off disk, so it should not be a free scraping loop.
+app.get('/api/output', readRateLimiter, async (req, res) => {
   const filePath = (req.query.path as string) || '';
   if (!filePath) { res.status(400).json({ ok: false, error: 'Invalid path' }); return; }
   try {
     const allowedRoot = path.resolve(process.cwd(), 'output');
     const resolved    = path.resolve(process.cwd(), filePath);
-    if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+    // Two-stage containment. path.resolve() collapses ../ but does NOT follow symlinks,
+    // so a link inside output/ pointing anywhere on disk would pass a resolve-only check
+    // and then be read. realpath() resolves the link; we re-check the real location and
+    // compare against the real root (the root itself may sit behind a symlink too).
+    if (!isInside(resolved, allowedRoot)) {
       res.status(400).json({ ok: false, error: 'Invalid path' }); return;
     }
-    const content = await readFile(resolved, 'utf-8');
+    const [realRoot, realTarget] = await Promise.all([realpath(allowedRoot), realpath(resolved)]);
+    if (!isInside(realTarget, realRoot)) {
+      res.status(400).json({ ok: false, error: 'Invalid path' }); return;
+    }
+    const content = await readFile(realTarget, 'utf-8');
     res.json({ ok: true, content, path: filePath });
   } catch {
     res.status(404).json({ ok: false, error: 'File not found' });

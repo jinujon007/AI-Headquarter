@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Bell, Check, CheckCheck, Trash2, X, Info, CheckCircle, AlertTriangle, XCircle } from "lucide-react";
-import { format, formatDistanceToNow } from "date-fns";
+import { formatDistanceToNow } from "date-fns";
+import { useRouter } from "next/navigation";
 
 export interface Notification {
   id: string;
@@ -47,6 +48,7 @@ const typeConfig: Record<
 
 export function NotificationDropdown() {
   const [isOpen, setIsOpen] = useState(false);
+  const router = useRouter();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -143,7 +145,7 @@ export function NotificationDropdown() {
       markAsRead(notification.id);
     }
     if (notification.link) {
-      window.location.href = notification.link;
+      router.push(notification.link);
     }
   };
 

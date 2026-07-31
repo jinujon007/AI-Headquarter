@@ -44,11 +44,11 @@ jobs:
       - name: Typecheck dashboard
         run: npx tsc --noEmit --project apps/dashboard/tsconfig.json
 
-      # Non-blocking: the codebase has pre-existing react-hooks violations.
-      # Flip to blocking once `npm run lint --workspace=apps/dashboard` is green.
-      - name: Lint dashboard (non-blocking)
+      # Blocking since 2026-07-31: zero lint errors. Warnings are still allowed
+      # (18 remain, all set-state-in-effect on external-system syncs — see
+      # apps/dashboard/eslint.config.mjs for why that rule is warn-level here).
+      - name: Lint dashboard
         run: npm run lint --workspace=apps/dashboard
-        continue-on-error: true
 
       - name: Build dashboard
         run: npm run build --workspace=apps/dashboard

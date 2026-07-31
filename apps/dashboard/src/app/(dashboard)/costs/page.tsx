@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DollarSign, TrendingUp, TrendingDown, AlertTriangle, Calendar, PieChart } from "lucide-react";
+import { DollarSign, TrendingUp, TrendingDown, AlertTriangle } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, PieChart as RePieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 interface CostData {
@@ -17,7 +17,23 @@ interface CostData {
   hourly: Array<{ hour: string; cost: number }>;
 }
 
-function transformCostsData(serverData: any): CostData {
+// What the server may actually send. Every field is optional: a fresh DB returns
+// sparse objects, and the proxy returns [] when the server is unreachable. byAgent
+// rows carry `agent_id` from older SQLite reads, hence the union.
+type ServerCostsPayload = {
+  today?: number;
+  yesterday?: number;
+  thisMonth?: number;
+  lastMonth?: number;
+  projected?: number;
+  budget?: number | null;
+  byAgent?: Array<{ agent?: string; agent_id?: string; cost?: number; tokens?: number }>;
+  byModel?: Array<{ model?: string; cost?: number; tokens?: number }>;
+  daily?: Array<{ date?: string; cost?: number; input?: number; output?: number }>;
+  hourly?: Array<{ hour: string; cost: number }>;
+};
+
+function transformCostsData(serverData: ServerCostsPayload | unknown[] | null): CostData {
   if (!serverData || Array.isArray(serverData)) {
     return {
       today: 0,
@@ -39,17 +55,17 @@ function transformCostsData(serverData: any): CostData {
     lastMonth: serverData.lastMonth || 0,
     projected: serverData.projected || 0,
     budget: typeof serverData.budget === 'number' ? serverData.budget : null,
-    byAgent: (serverData.byAgent || []).map((a: any) => ({
+    byAgent: (serverData.byAgent || []).map((a) => ({
       agent: a.agent || a.agent_id || 'unknown',
       cost: a.cost || 0,
       tokens: a.tokens || 0
     })),
-    byModel: (serverData.byModel || []).map((m: any) => ({
+    byModel: (serverData.byModel || []).map((m) => ({
       model: m.model || 'unknown',
       cost: m.cost || 0,
       tokens: m.tokens || 0
     })),
-    daily: (serverData.daily || []).map((d: any) => ({
+    daily: (serverData.daily || []).map((d) => ({
       date: d.date || '',
       cost: d.cost || 0,
       input: d.input || 0,
@@ -78,24 +94,29 @@ export default function CostsPage() {
   const [timeframe, setTimeframe] = useState<"7d" | "30d" | "90d">("30d");
 
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchCostData = async () => {
+      try {
+        const res = await fetch(`/api/costs?timeframe=${timeframe}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (!cancelled) setCostData(transformCostsData(data));
+        }
+      } catch (error) {
+        console.error("Failed to fetch cost data:", error);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
     fetchCostData();
     const interval = setInterval(fetchCostData, 60000); // Update every minute
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [timeframe]);
-
-  const fetchCostData = async () => {
-    try {
-      const res = await fetch(`/api/costs?timeframe=${timeframe}`);
-      if (res.ok) {
-        const data = await res.json();
-        setCostData(transformCostsData(data));
-      }
-    } catch (error) {
-      console.error("Failed to fetch cost data:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   if (loading) {
     return (

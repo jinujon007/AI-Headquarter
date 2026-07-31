@@ -1,4 +1,4 @@
-import { OfficeRoom, buildTeamContext, normalizeDeliverable } from './OfficeRoom';
+import { OfficeRoom, buildTeamContext, normalizeDeliverable, safeForLog } from './OfficeRoom';
 
 // ponytail: no Colyseus boot — Object.create skips the Room/MemoryStore constructors,
 // we inject only the private fields each method actually touches. Full-room integration
@@ -353,5 +353,165 @@ describe('normalizeDeliverable', () => {
         expect(normalizeDeliverable('function build() { return 1; }', 'dev').extension).toBe('js');
         // same text from a writer is prose, not a program
         expect(normalizeDeliverable('function build() { return 1; }', 'copywriter').extension).toBe('md');
+    });
+});
+
+describe('hireAgent — office capacity', () => {
+    // The 6-hire cap is a documented limit ("max 11 agents" in docs/api.md) that had
+    // no test, and its refusal was being reported to the dashboard as ok:true.
+    it('refuses past 6 hires with an error instead of throwing', async () => {
+        const room = makeRoom();
+        room.hireCount = 6;
+        const result = await room.hireAgent('Fiona', 'Financial Analyst');
+        expect(result.error).toMatch(/full/i);
+        expect(result.code).toBe('office_full');
+    });
+
+    // Regression: initialize() was fire-and-forget with .catch(console.error). On
+    // failure the agent was never registered and no desk spawned, but hireAgent had
+    // already returned { id, name, role } and the API answered ok:true.
+    it('reports an initialize failure instead of a phantom hire', async () => {
+        const room = makeRoom();
+        room.hireCount = 0;
+        room.state.createAgent = jest.fn();
+        room.state.agents.delete = jest.fn();
+        room.getAdapter = () => ({ complete: jest.fn() });
+        const { Agent } = require('@aihq/core');
+        jest.spyOn(Agent.prototype, 'initialize').mockRejectedValue(new Error('ECONNREFUSED'));
+
+        const result = await room.hireAgent('Fiona', 'Financial Analyst');
+
+        expect(result.error).toMatch(/initialize/i);
+        expect(result.code).toBe('init_failed');
+        expect(result.id).toBeUndefined();
+        expect(room.coreAgents.has('hire_0')).toBe(false);
+        expect(room.broadcast).not.toHaveBeenCalledWith('agent:hired', expect.anything());
+        jest.restoreAllMocks();
+    });
+
+    it('does not consume a slot when it refuses', async () => {
+        const room = makeRoom();
+        room.hireCount = 6;
+        await room.hireAgent('Fiona', 'Financial Analyst');
+        await room.hireAgent('Sam', 'Designer');
+        expect(room.hireCount).toBe(6);
+    });
+});
+
+describe('runSpecialistTask — a deliverable that never lands is a failed task', () => {
+    // Regression: a failed write_file fell through to completeTask() with an undefined
+    // path and broadcast task:completed + "Task complete." The product's entire promise
+    // is real output files, so a silent write failure is the worst possible lie.
+    function makeSpecialistRoom(writeSucceeds: boolean) {
+        const room = makeRoom();
+        room.sessionProvider = undefined;
+        room.sessionApiKey = undefined;
+        room.getAdapter = () => ({
+            complete: jest.fn().mockResolvedValue({
+                content: '# Landing page copy',
+                usage: { prompt: 10, completion: 20 },
+            }),
+        });
+        room.toolExecutor = {
+            execute: jest.fn().mockResolvedValue(
+                writeSucceeds
+                    ? { success: true, output: 'File written: output/copywriter/page.md' }
+                    : { success: false, output: '', error: 'EACCES: permission denied' },
+            ),
+        };
+        room.taskManager.completeTask = jest.fn().mockResolvedValue(undefined);
+        room.taskManager.markTaskFailed = jest.fn().mockResolvedValue(undefined);
+        return room;
+    }
+
+    const broadcastTypes = (room: any) => room.broadcast.mock.calls.map(([t]: any[]) => t);
+
+    it('marks the task failed when the file cannot be written', async () => {
+        const room = makeSpecialistRoom(false);
+        await room.runSpecialistTask('copywriter', 1, 'Write the copy', undefined, undefined, undefined, []);
+
+        expect(room.taskManager.markTaskFailed).toHaveBeenCalledWith(1);
+        expect(room.taskManager.completeTask).not.toHaveBeenCalled();
+        expect(broadcastTypes(room)).toContain('task:failed');
+        expect(broadcastTypes(room)).not.toContain('task:completed');
+    });
+
+    it('completes normally when the file is written', async () => {
+        const room = makeSpecialistRoom(true);
+        await room.runSpecialistTask('copywriter', 1, 'Write the copy', undefined, undefined, undefined, []);
+
+        expect(room.taskManager.completeTask).toHaveBeenCalledWith(1, 'output/copywriter/page.md');
+        expect(room.taskManager.markTaskFailed).not.toHaveBeenCalled();
+        expect(broadcastTypes(room)).toContain('task:completed');
+    });
+});
+
+describe('batch reporting never claims work that failed', () => {
+    // Regression: onTaskComplete pushed every title into batch.titles regardless of
+    // outcome, so a batch where everything failed still produced a board wrapup of
+    // "My deliverable is ready" and a PA report headed "Tasks completed".
+    function batchRoom(total: number) {
+        const room = makeRoom();
+        room.runLightweightBoardWrapup = jest.fn().mockResolvedValue(undefined);
+        room.synthesizeAndReport = jest.fn().mockResolvedValue(undefined);
+        room.pendingBatchTasks.set('b1', {
+            total, completed: 0, failed: 0,
+            titles: [], failedTitles: [], failedAgents: [], outputPaths: [],
+            participants: ['copywriter', 'dev'], topic: 'landing page',
+        });
+        return room;
+    }
+
+    it('keeps failed titles out of the completed list', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', 'output/copywriter/a.md', false);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const [titles, failedTitles, outputPaths] = room.synthesizeAndReport.mock.calls[0];
+        expect(titles).toEqual(['Write copy']);
+        expect(failedTitles).toEqual(['Build page']);
+        expect(outputPaths).toEqual(['output/copywriter/a.md']);
+    });
+
+    it('tells the board wrapup which agents failed', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', 'output/copywriter/a.md', false);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const failedAgents = room.runLightweightBoardWrapup.mock.calls[0][3];
+        expect(failedAgents).toEqual(['dev']);
+    });
+
+    it('reports nothing completed when the whole batch fails', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', undefined, true);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const [titles, failedTitles, outputPaths] = room.synthesizeAndReport.mock.calls[0];
+        expect(titles).toEqual([]);
+        expect(failedTitles).toHaveLength(2);
+        expect(outputPaths).toEqual([]);
+    });
+});
+
+describe('safeForLog', () => {
+    const LF = String.fromCharCode(10);
+    const CR = String.fromCharCode(13);
+    const NUL = String.fromCharCode(0);
+
+    it('collapses line breaks so a value cannot forge a log entry', () => {
+        const out = safeForLog('Fiona' + CR + LF + '[ADMIN] granted');
+        expect(out).toBe('Fiona [ADMIN] granted');
+        expect(out.includes(LF)).toBe(false);
+        expect(out.includes(CR)).toBe(false);
+    });
+
+    it('strips control characters and truncates', () => {
+        expect(safeForLog('a' + NUL + 'b')).toBe('ab');
+        expect(safeForLog('x'.repeat(500), 50)).toHaveLength(50);
+    });
+
+    it('uses the message of an Error', () => {
+        expect(safeForLog(new Error('boom' + LF + 'forged'))).toBe('boom forged');
     });
 });

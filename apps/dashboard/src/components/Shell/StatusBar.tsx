@@ -1,13 +1,72 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Cpu, HardDrive, MemoryStick, Clock } from "lucide-react";
+import { Cpu, HardDrive, MemoryStick, Clock, type LucideIcon } from "lucide-react";
 
 interface SystemStats {
   cpu: number;
   ram: { used: number; total: number };
   disk: { used: number; total: number };
   uptime: string;
+}
+
+interface StatusMetricProps {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  barPercent?: number;
+  color?: string;
+}
+
+// Module scope, not inside StatusBar: a component defined during render gets a new
+// identity every render, so React unmounts and remounts it instead of updating it.
+function StatusMetric({ icon: Icon, label, value, barPercent, color }: StatusMetricProps) {
+  return (
+  <div className="flex items-center gap-1.5" style={{ height: "24px" }}>
+    <Icon style={{ width: "14px", height: "14px", color: "var(--text-muted)" }} />
+    <span
+      style={{
+        fontFamily: "var(--font-body)",
+        fontSize: "11px",
+        fontWeight: 600,
+        letterSpacing: "1px",
+        color: "var(--text-muted)",
+      }}
+    >
+      {label}
+    </span>
+    <span
+      style={{
+        fontFamily: "var(--font-body)",
+        fontSize: "11px",
+        fontWeight: 600,
+        color: "var(--text-secondary)",
+      }}
+    >
+      {value}
+    </span>
+    {barPercent !== undefined && (
+      <div
+        style={{
+          width: "48px",
+          height: "4px",
+          backgroundColor: "var(--surface-elevated)",
+          borderRadius: "2px",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            width: `${Math.min(100, barPercent)}%`,
+            height: "100%",
+            backgroundColor: color,
+            borderRadius: "2px",
+          }}
+        />
+      </div>
+    )}
+  </div>
+  );
 }
 
 export function StatusBar() {
@@ -55,53 +114,6 @@ export function StatusBar() {
   const diskPercent = diskAvailable ? rawDiskPercent : 0;
   const diskColor = diskPercent < 60 ? "var(--positive)" : diskPercent < 85 ? "var(--warning)" : "var(--negative)";
 
-  // StatusMetric component
-  const StatusMetric = ({ icon: Icon, label, value, barPercent, color }: any) => (
-    <div className="flex items-center gap-1.5" style={{ height: "24px" }}>
-      <Icon style={{ width: "14px", height: "14px", color: "var(--text-muted)" }} />
-      <span
-        style={{
-          fontFamily: "var(--font-body)",
-          fontSize: "11px",
-          fontWeight: 600,
-          letterSpacing: "1px",
-          color: "var(--text-muted)",
-        }}
-      >
-        {label}
-      </span>
-      <span
-        style={{
-          fontFamily: "var(--font-body)",
-          fontSize: "11px",
-          fontWeight: 600,
-          color: "var(--text-secondary)",
-        }}
-      >
-        {value}
-      </span>
-      {barPercent !== undefined && (
-        <div
-          style={{
-            width: "48px",
-            height: "4px",
-            backgroundColor: "var(--surface-elevated)",
-            borderRadius: "2px",
-            overflow: "hidden",
-          }}
-        >
-          <div
-            style={{
-              width: `${Math.min(100, barPercent)}%`,
-              height: "100%",
-              backgroundColor: color,
-              borderRadius: "2px",
-            }}
-          />
-        </div>
-      )}
-    </div>
-  );
 
   return (
     <div

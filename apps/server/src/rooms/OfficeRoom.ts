@@ -67,6 +67,8 @@ interface BatchState {
     completed: number;
     failed: number;
     titles: string[];
+    failedTitles: string[];
+    failedAgents: string[];
     outputPaths: string[];
     participants: string[];
     topic: string;
@@ -111,6 +113,15 @@ export function normalizeDeliverable(
 
     const isCode = agentId === 'dev' && /\b(def |function |import |class )/.test(unfenced);
     return { content: unfenced, extension: isCode ? 'js' : 'md' };
+}
+
+// Strips line breaks and control characters from untrusted values before they are
+// logged. The /api/logs ring buffer sanitises what the dashboard sees, but console
+// output also goes straight to the operator's terminal unfiltered — an agent name or
+// model error containing a newline can forge a log line there.
+export function safeForLog(value: unknown, max = 200): string {
+    const raw = value instanceof Error ? value.message : String(value);
+    return raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, max);
 }
 
 export class OfficeRoom extends Room<OfficeState> {
@@ -379,7 +390,7 @@ this.onMessage('assign-task', async (client, message) => {
                             }
                         } else if (decision.toolCall.name === 'hire_agent') {
                             const { name, role } = decision.toolCall.params;
-                            this.hireAgent(name || 'Specialist', role || 'Specialist', this.sessionProvider, this.sessionApiKey);
+                            await this.hireAgent(name || 'Specialist', role || 'Specialist', this.sessionProvider, this.sessionApiKey);
                         } else {
                             const toolParams = { ...decision.toolCall.params, agentId: id };
                             const result = await this.toolExecutor.execute(decision.toolCall.name, toolParams);
@@ -541,7 +552,7 @@ Example — CEO says "thanks, looks great":
             else { fullResponse = raw || 'On it.'; }
             // Chat-driven hiring: "hire a financial analyst" spawns a real agent + desk
             if (parsed?.hire?.name && parsed.hire.role) {
-                const hired = this.hireAgent(parsed.hire.name, parsed.hire.role, provider, apiKey);
+                const hired = await this.hireAgent(parsed.hire.name, parsed.hire.role, provider, apiKey);
                 if (hired?.error) fullResponse += ` (Couldn't hire: ${hired.error})`;
             }
             // Pre-run cost estimate in the PA acknowledgment — BYOK only ($0 estimates are skipped)
@@ -555,7 +566,7 @@ Example — CEO says "thanks, looks great":
         } catch (err) {
             // Honest failure — do NOT pretend work is being delegated. Log the real
             // cause for operators (this feeds /api/logs and the dashboard Logs page).
-            console.error('[PA] model call failed:', err instanceof Error ? `${err.message}${err.cause ? ` (${err.cause})` : ''}` : err);
+            console.error('[PA] model call failed: %s', safeForLog(err instanceof Error ? `${err.message}${err.cause ? ` (${err.cause})` : ''}` : err));
             fullResponse = 'Could not reach the model — check that Ollama is running, or configure an API key in Settings.';
             emit({ type: 'token', agentId: 'pa', token: fullResponse });
             emit({ type: 'done', agentId: 'pa' });
@@ -701,6 +712,8 @@ Example — CEO says "thanks, looks great":
             completed: 0,
             failed: 0,
             titles: [],
+            failedTitles: [],
+            failedAgents: [],
             outputPaths: [],
             participants: valid,
             topic: ceoContent,
@@ -820,12 +833,21 @@ Example — CEO says "thanks, looks great":
                 content: deliverable, agentId, filename: taskTitle.slice(0, 40), extension: ext,
             });
 
-            // Persist token usage
+            // Persist token usage first — the model call happened and cost real money
+            // even if writing the deliverable to disk then fails.
             await this.memoryStore.logUsage(this.sessionId, agentId, taskId, model, result.usage?.prompt || 0, result.usage?.completion || 0);
 
-            const outputPath = toolResult.success
-                ? toolResult.output.replace('File written: ', '').trim()
-                : undefined;
+            // A task whose file never landed is a failed task. This previously fell
+            // through to completeTask() with an undefined path and told the CEO
+            // "Task complete." — the whole promise of the product is real output files.
+            // A task whose file never landed is a failed task. This previously fell
+            // through to completeTask() with an undefined path and told the CEO
+            // "Task complete." — the whole promise of the product is real output files.
+            if (!toolResult.success) {
+                throw new Error(`Could not write the deliverable: ${toolResult.error || 'unknown write error'}`);
+            }
+
+            const outputPath = toolResult.output.replace('File written: ', '').trim();
 
             await this.taskManager.completeTask(taskId, outputPath);
             agent.currentTask = '';
@@ -847,17 +869,17 @@ Example — CEO says "thanks, looks great":
             this.broadcast('agent:status', { type: 'agent:status', agentId, status: 'idle' });
             this.broadcast('agent:message', {
                 type: 'agent:message', agentId,
-                message: toolResult.success ? `Done. Output at: ${outputPath}` : 'Task complete.',
+                message: `Done. Output at: ${outputPath}`,
                 targetId: 'pa',
             });
 
-            if (batchId) this.onTaskComplete(batchId, taskTitle, outputPath, false);
+            if (batchId) this.onTaskComplete(batchId, agentId, taskTitle, outputPath, false);
 
             // Cap the excerpt so downstream prompts stay small enough for local 3B models.
             return { agentName: agent.config.name, excerpt: output.slice(0, 2500) };
 
         } catch (err) {
-            console.error(`[${agentId}] runSpecialistTask error:`, err);
+            console.error('[%s] runSpecialistTask error: %s', safeForLog(agentId, 40), safeForLog(err));
             agentState.action = 'idle';
             agentState.currentTask = '';
             agent.currentTask = '';
@@ -869,7 +891,7 @@ Example — CEO says "thanks, looks great":
             });
             this.broadcast('agent:status', { type: 'agent:status', agentId, status: 'idle' });
 
-            if (batchId) this.onTaskComplete(batchId, taskTitle, undefined, true);
+            if (batchId) this.onTaskComplete(batchId, agentId, taskTitle, undefined, true);
             return null;
         } finally {
             // Release the thinking lock acquired in delegate()
@@ -877,27 +899,34 @@ Example — CEO says "thanks, looks great":
         }
     }
 
-    private onTaskComplete(batchId: string, title: string, outputPath: string | undefined, failed: boolean) {
+    private onTaskComplete(batchId: string, agentId: string, title: string, outputPath: string | undefined, failed: boolean) {
         const batch = this.pendingBatchTasks.get(batchId);
         if (!batch) return;
         batch.completed++;
-        if (failed) batch.failed++;
-        batch.titles.push(title);
+        // Succeeded and failed titles are kept apart so the board wrapup and the PA's
+        // report to the CEO cannot claim a deliverable that was never produced.
+        if (failed) {
+            batch.failed++;
+            batch.failedTitles.push(title);
+            batch.failedAgents.push(agentId);
+        } else {
+            batch.titles.push(title);
+        }
         if (outputPath) batch.outputPaths.push(outputPath);
 
         if (batch.completed >= batch.total) {
             this.pendingBatchTasks.delete(batchId);
             // F-04: Board meeting runs AFTER tasks complete, lightweight (no extra LLM calls)
             if (batch.participants.length >= 2) {
-                this.runLightweightBoardWrapup(batch.participants, batch.topic, batch.titles).catch(console.error);
+                this.runLightweightBoardWrapup(batch.participants, batch.topic, batch.titles, batch.failedAgents).catch(console.error);
             }
-            this.synthesizeAndReport(batch.titles, batch.outputPaths, batch.topic, batch.provider, batch.apiKey).catch(console.error);
+            this.synthesizeAndReport(batch.titles, batch.failedTitles, batch.outputPaths, batch.topic, batch.provider, batch.apiKey).catch(console.error);
         }
     }
 
     // ─── BOARD WRAPUP (lightweight — no extra LLM calls) ────────────────────
 
-    private async runLightweightBoardWrapup(participants: string[], topic: string, completedTitles: string[]): Promise<void> {
+    private async runLightweightBoardWrapup(participants: string[], topic: string, completedTitles: string[], failedAgents: string[] = []): Promise<void> {
         if (this.isBoardMeetingActive) return;
         this.isBoardMeetingActive = true;
 
@@ -906,7 +935,7 @@ Example — CEO says "thanks, looks great":
             if (BOARD_SEATS[i]) seatAssignments[p] = BOARD_SEATS[i];
         });
 
-        console.log(`[Board] Wrapup meeting: ${participants.join(', ')} — topic: ${topic.slice(0, 60)}`);
+        console.log('[Board] Wrapup meeting: %s — topic: %s', safeForLog(participants.join(', '), 120), safeForLog(topic, 60));
         this.broadcast('board:started', { type: 'board:started', participants, topic, seatAssignments });
 
         participants.forEach((p, i) => {
@@ -917,9 +946,12 @@ Example — CEO says "thanks, looks great":
                 agentState.y = BOARD_SEATS[i].y;
                 agentState.action = 'in-meeting';
                 this.broadcast('agent:status', { type: 'agent:status', agentId: p, status: 'in-meeting' });
-                // Template message — no LLM call
+                // Template message — no LLM call. Agents whose task failed say so;
+                // they used to announce a deliverable that did not exist.
                 const title = completedTitles.find(t => t) || 'my task';
-                const msg = `My deliverable for "${title.slice(0, 40)}" is ready.`;
+                const msg = failedAgents.includes(p)
+                    ? `I could not finish my part of "${topic.slice(0, 40)}".`
+                    : `My deliverable for "${title.slice(0, 40)}" is ready.`;
                 this.broadcast('agent:message', { type: 'agent:message', agentId: p, message: msg, targetId: 'pa' });
             }
         });
@@ -948,6 +980,7 @@ Example — CEO says "thanks, looks great":
 
     private async synthesizeAndReport(
         taskTitles: string[],
+        failedTitles: string[],
         outputPaths: string[],
         topic: string,
         provider?: string,
@@ -995,7 +1028,9 @@ Example — CEO says "thanks, looks great":
         } catch {
             this.broadcast('agent:message', {
                 type: 'agent:message', agentId: 'pa',
-                message: `All ${taskTitles.length} tasks completed. Check the Tasks page for output files.`,
+                message: failedTitles.length === 0
+                    ? `All ${taskTitles.length} tasks completed. Check the Tasks page for output files.`
+                    : `${taskTitles.length} of ${taskTitles.length + failedTitles.length} tasks completed; ${failedTitles.length} failed with no output. Check the Tasks page for details.`,
                 targetId: 'ceo', isReport: true,
             });
         } finally {
@@ -1006,9 +1041,9 @@ Example — CEO says "thanks, looks great":
 
     // ─── HIRE AGENT ──────────────────────────────────────────────────────────
 
-    public hireAgent(name: string, role: string, provider?: string, apiKey?: string): any {
+    public async hireAgent(name: string, role: string, provider?: string, apiKey?: string): Promise<any> {
         if (this.hireCount >= 6) {
-            return { error: 'Office full (max 11 agents)' };
+            return { error: 'Office full (max 11 agents)', code: 'office_full' };
         }
 
         // Reserve the slot synchronously to prevent race conditions on concurrent hire calls
@@ -1048,23 +1083,35 @@ Example — CEO says "thanks, looks great":
         const adapter = this.getAdapter(effectiveProvider, effectiveApiKey);
         hireAgentObj.setInferenceAdapter(adapter);
 
-        hireAgentObj.initialize().then(() => {
-            this.coreAgents.set(id, hireAgentObj);
-            this.thinkingLocks.set(id, false);
+        // initialize() used to be fire-and-forget with .catch(console.error). When it
+        // failed the agent was never registered and no desk ever spawned, yet this method
+        // had already returned success — the caller reported a hire that did not exist.
+        try {
+            await hireAgentObj.initialize();
+        } catch (err) {
+            console.error('[hire] %s failed to initialize: %s', safeForLog(name, 50), safeForLog(err));
+            this.state.agents.delete(id);
+            // ponytail: the slot stays consumed. Releasing it would mean decrementing a
+            // counter another concurrent hire may already have claimed; burning one of six
+            // slots on a rare failure is cheaper than handing two agents the same desk.
+            return { error: 'Agent failed to initialize — check that the model provider is reachable.', code: 'init_failed' };
+        }
 
-            this.broadcast('agent:hired', {
-                type: 'agent:hired',
-                agent: { id, name, role, status: 'idle', provider: effectiveProvider || 'ollama', deskPosition: pos },
+        this.coreAgents.set(id, hireAgentObj);
+        this.thinkingLocks.set(id, false);
+
+        this.broadcast('agent:hired', {
+            type: 'agent:hired',
+            agent: { id, name, role, status: 'idle', provider: effectiveProvider || 'ollama', deskPosition: pos },
+        });
+
+        setTimeout(() => {
+            this.broadcast('agent:message', {
+                type: 'agent:message', agentId: id,
+                message: `Hi team. I'm ${name}. Ready to ${role.toLowerCase()}. Assign me a task whenever you need.`,
+                targetId: 'all',
             });
-
-            setTimeout(() => {
-                this.broadcast('agent:message', {
-                    type: 'agent:message', agentId: id,
-                    message: `Hi team. I'm ${name}. Ready to ${role.toLowerCase()}. Assign me a task whenever you need.`,
-                    targetId: 'all',
-                });
-            }, 1500);
-        }).catch(console.error);
+        }, 1500);
 
         return { id, name, role };
     }

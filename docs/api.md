@@ -60,10 +60,14 @@ Returns all agents currently in the office.
     "model": "llama3.2:3b",
     "provider": "ollama",
     "deskPosition": [-6, 0, -5],
-    "currentTask": null
+    "currentTask": "Write the landing page copy"
   }
 ]
 ```
+
+`currentTask` is **omitted entirely** when the agent is idle — it is never `null`.
+Check with `'currentTask' in agent` or a falsy test, not `=== null`
+(`AgentSummary.currentTask` in `@aihq/types` is optional for this reason).
 
 ---
 

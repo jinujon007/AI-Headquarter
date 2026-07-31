@@ -15,6 +15,7 @@ import { MemoryStore } from './memory/MemoryStore';
 import { TaskManager } from './tasks/TaskManager';
 import { ToolExecutor } from './tools/ToolExecutor';
 import { existsSync, unlinkSync } from 'fs';
+import path from 'path';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 
@@ -40,6 +41,17 @@ const stubAdapter = {
         return { content, usage: { prompt: 100, completion: 50 }, latency: 5 };
     }),
 };
+
+function canSymlink(): boolean {
+    const { symlinkSync, rmSync, mkdtempSync } = require('fs');
+    const os = require('os');
+    try {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'symcheck-'));
+        symlinkSync(path.join(dir, 'nope'), path.join(dir, 'link'));
+        rmSync(dir, { recursive: true, force: true });
+        return true;
+    } catch { return false; }
+}
 
 describe('E2E demo path — CEO command → delegation → files → report', () => {
     let server: Server;
@@ -156,6 +168,27 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
         expect(stubAdapter.complete).toHaveBeenCalledTimes(4);
     }, 30000);
 
+    // Regression: hireAgent refuses past the cap by returning { error }, but the
+    // endpoint wrapped that in { ok: true }, so the dashboard reported a successful
+    // hire for an agent that was never created.
+    it('reports a refused hire as a failure, not ok:true', async () => {
+        const before = room.hireCount;
+        room.hireCount = 6;
+        try {
+            const res = await fetch(`${baseUrl}/api/agents/hire`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'Fiona', role: 'Financial Analyst' }),
+            });
+            const body = await res.json();
+            expect(res.status).toBe(409);
+            expect(body.ok).toBe(false);
+            expect(body.error).toMatch(/full/i);
+        } finally {
+            room.hireCount = before;
+        }
+    });
+
     it('streams an honest error when the room is gone', async () => {
         (OfficeRoom as any).activeRoom = null;
         const res = await fetch(`${baseUrl}/api/ceo/message`, {
@@ -166,4 +199,77 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
         expect(res.status).toBe(503);
         (OfficeRoom as any).activeRoom = room;
     });
+    describe('GET /api/logs - log injection', () => {
+        // Agent names, model errors and CEO text all reach the console ring buffer, and
+        // /api/logs serves it straight to the dashboard. A newline in any of them would
+        // forge extra entries, so the buffer sanitises at the choke point.
+        it('collapses newlines and control characters into a single entry', async () => {
+            const LF = String.fromCharCode(10);
+            const CR = String.fromCharCode(13);
+            const NUL = String.fromCharCode(0);
+            console.log('[test] start' + LF + '[FORGED] admin granted' + CR + LF + 'second' + NUL + 'forged');
+
+            const res = await fetch(`${baseUrl}/api/logs`);
+            const entries: Array<{ line: string }> = await res.json();
+
+            expect(entries.filter(e => e.line.startsWith('[FORGED]'))).toHaveLength(0);
+
+            const real = entries.find(e => e.line.includes('[test] start'));
+            expect(real).toBeDefined();
+            expect(real!.line).toContain('[FORGED] admin granted');
+            expect(real!.line.includes(LF)).toBe(false);
+            expect(real!.line.includes(CR)).toBe(false);
+            expect(real!.line.includes(NUL)).toBe(false);
+        });
+    });
+
+    describe('GET /api/output containment', () => {
+        const cases: Array<[string, string]> = [
+            ['rejects a parent-directory traversal', '../../package.json'],
+            ['rejects an absolute path', process.platform === 'win32' ? 'C:/Windows/win.ini' : '/etc/passwd'],
+            ['rejects an encoded traversal', 'output/../../package.json'],
+            ['rejects a path that only prefix-matches the root', '../outputs-elsewhere/secret.md'],
+        ];
+
+        for (const [title, attempt] of cases) {
+            it(title, async () => {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent(attempt)}`);
+                expect(res.status).toBe(400);
+                expect((await res.json()).error).toBe('Invalid path');
+            });
+        }
+
+        // Regression: /api/output first shipped behind the strict 5-per-minute limiter
+        // built for LLM calls, so a user opening a sixth task output got a 429. Reads
+        // have their own, larger bucket now.
+        it('serves a burst of reads well past the write limit', async () => {
+            const results: number[] = [];
+            for (let i = 0; i < 12; i++) {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent('../nope.txt')}`);
+                results.push(res.status);
+            }
+            expect(results.every((s) => s === 400)).toBe(true);
+            expect(results).not.toContain(429);
+        });
+
+        // Creating a symlink needs elevation or Developer Mode on Windows. Rather than
+        // returning early and reporting a silent pass, detect the capability up front so
+        // an unexercised test shows up as skipped. Linux CI runs it for real.
+        (canSymlink() ? it : it.skip)('rejects a symlink inside output/ that points outside it', async () => {
+            const { symlinkSync, mkdirSync, rmSync, existsSync: exists } = require('fs');
+            const outDir = path.resolve(process.cwd(), 'output');
+            const link = path.join(outDir, 'escape-link.md');
+            mkdirSync(outDir, { recursive: true });
+            if (exists(link)) rmSync(link, { force: true });
+            symlinkSync(path.resolve(process.cwd(), 'package.json'), link);
+            try {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent('output/escape-link.md')}`);
+                expect(res.status).toBe(400);
+            } finally {
+                rmSync(link, { force: true });
+            }
+        });
+    });
+
 });
+

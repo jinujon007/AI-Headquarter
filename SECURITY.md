@@ -74,3 +74,18 @@ the remaining items is low: there is no untrusted multi-user traffic, and the de
 packages never run in a deployed instance. That is context, not a dismissal — if you can
 demonstrate a real exploit path through any of these in a default install, please report
 it (see above) and we will treat it as in scope.
+
+## Dismissed CodeQL Alerts
+
+Five CodeQL alerts are dismissed as false positives. They are listed here rather than
+left only in GitHub's UI, so anyone auditing the repo can check our reasoning instead of
+taking it on trust. Every one is a case of CodeQL not recognising an in-repo helper.
+
+| Rule | Where | Why it is dismissed |
+|------|-------|---------------------|
+| `js/path-injection` (high) | `GET /api/output` | Two-stage containment: `path.resolve()` collapses `../`, then `realpath()` resolves symlinks on **both** the target and the root before `isInside()` re-checks. Tests cover parent traversal, absolute paths, embedded traversal, the `/output` vs `/outputs-evil` prefix-match bug, and a real symlink escape (exercised on Linux CI). |
+| `js/missing-rate-limiting` (high) | `GET /api/output` | The route *is* limited — `readRateLimiter`, 60/min on its own bucket. CodeQL only recognises packages like `express-rate-limit`. Tests assert a 12-read burst passes and the strict write tier returns 429. |
+| `js/log-injection` (medium ×3) | `OfficeRoom.ts` | Untrusted values go through `safeForLog()` (strips CR/LF/U+2028/U+2029 and C0 control chars, truncates) and are passed as `%s` format arguments. The `/api/logs` ring buffer sanitises independently at the choke point. Both layers are unit tested. |
+
+If you think any of these reasons is wrong, please open an issue — we would rather
+re-open an alert than defend a bad call.

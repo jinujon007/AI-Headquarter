@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, type ComponentRef } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls } from '@react-three/drei';
 import * as THREE from 'three';
@@ -11,7 +11,7 @@ interface FirstPersonControlsProps {
 
 export default function FirstPersonControls({ moveSpeed = 5 }: FirstPersonControlsProps) {
   const { camera } = useThree();
-  const controlsRef = useRef<any>(null);
+  const controlsRef = useRef<ComponentRef<typeof PointerLockControls>>(null);
   
   const moveState = useRef({
     forward: false,
@@ -23,7 +23,6 @@ export default function FirstPersonControls({ moveSpeed = 5 }: FirstPersonContro
   });
 
   const velocity = useRef(new THREE.Vector3());
-  const direction = useRef(new THREE.Vector3());
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -91,6 +90,11 @@ export default function FirstPersonControls({ moveSpeed = 5 }: FirstPersonContro
     };
   }, []);
 
+  // react-hooks/immutability models React render semantics; react-three-fiber's
+  // useFrame is a render-loop callback that runs outside React's render phase and
+  // whose entire purpose is mutating the camera in place. Following the rule here
+  // would mean not driving the camera at all.
+  /* eslint-disable react-hooks/immutability */
   useFrame((state, delta) => {
     if (!controlsRef.current?.isLocked) return;
 
@@ -126,6 +130,7 @@ export default function FirstPersonControls({ moveSpeed = 5 }: FirstPersonContro
     camera.position.y = Math.max(1, Math.min(8, camera.position.y));
     camera.position.z = Math.max(-8, Math.min(8, camera.position.z));
   });
+  /* eslint-enable react-hooks/immutability */
 
   return <PointerLockControls ref={controlsRef} />;
 }
