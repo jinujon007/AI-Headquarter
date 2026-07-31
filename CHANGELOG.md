@@ -8,6 +8,15 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [1.1.1](https://github.com/jinujon007/AI-Headquarter/compare/v1.1.0...v1.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* **dashboard:** notification bell had no producer and was permanently empty ([c9d0612](https://github.com/jinujon007/AI-Headquarter/commit/c9d06128913f24804881dd89b96be86b64bc85eb))
+* **demo:** HTML landing pages were saved as .md and rendered as plain text ([b8adf42](https://github.com/jinujon007/AI-Headquarter/commit/b8adf426ff75775047560cde6b9759ecfc804337))
+* **deps:** restore cross-platform lockfile entries stripped by a Windows regen ([e9a7140](https://github.com/jinujon007/AI-Headquarter/commit/e9a714026cac53defb5ba472da404f4f1aac4638))
+
 # [1.1.0](https://github.com/jinujon007/AI-Headquarter/compare/v1.0.0...v1.1.0) (2026-07-28)
 
 
