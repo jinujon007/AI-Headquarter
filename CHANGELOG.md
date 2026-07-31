@@ -8,6 +8,22 @@ Versioning: [Semantic Versioning](https://semver.org/)
 
 ## [Unreleased]
 
+## [1.1.2](https://github.com/jinujon007/AI-Headquarter/compare/v1.1.1...v1.1.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* **dashboard:** clear every lint error and make the CI lint gate blocking ([bf6b0d0](https://github.com/jinujon007/AI-Headquarter/commit/bf6b0d02f1e72eef0db1b3da5eaf883f60a530d7))
+* **dashboard:** hire and output proxies swallowed the upstream status code ([9f516b3](https://github.com/jinujon007/AI-Headquarter/commit/9f516b3794d3abbf367ad6a019d02e8c7a409786))
+* **server:** a deliverable that never landed was reported as a completed task ([af6e60a](https://github.com/jinujon007/AI-Headquarter/commit/af6e60a2b1065d095527b9f95bf2fb82144f05bf))
+* **server:** a hire whose agent failed to initialize was still reported as success ([ac189d8](https://github.com/jinujon007/AI-Headquarter/commit/ac189d8aa92a569ecb3c41639e49260a67f5f55b))
+* **server:** a refused hire was reported to the dashboard as a success ([e913d73](https://github.com/jinujon007/AI-Headquarter/commit/e913d73e346cc8b901e1dee85faa39612d12388f))
+* **server:** sanitise the log ring buffer — forged entries could reach the UI ([aaa3156](https://github.com/jinujon007/AI-Headquarter/commit/aaa3156032cf72492a48ea336e008bfd9d56ebfc))
+* **server:** sanitise untrusted values at the log call sites too ([bc69e1d](https://github.com/jinujon007/AI-Headquarter/commit/bc69e1d21b3b86f56c1c7b9016d9fcdfbcc4933d))
+* **server:** symlink-safe output reads and rate limits on two unprotected routes ([2d5f3a9](https://github.com/jinujon007/AI-Headquarter/commit/2d5f3a9dcd3f46f88ba56d397e841b15f348f968))
+* **server:** the board wrapup and PA report claimed deliverables that failed ([f43d1e2](https://github.com/jinujon007/AI-Headquarter/commit/f43d1e28ee089b07bea650dbb5192183f35d9b2c))
+* **server:** tiered rate limits — reads no longer share the LLM budget ([7aff15e](https://github.com/jinujon007/AI-Headquarter/commit/7aff15e5daf4787d11d44b96262b83b04b14d220))
+
 ## [1.1.1](https://github.com/jinujon007/AI-Headquarter/compare/v1.1.0...v1.1.1) (2026-07-31)
 
 
