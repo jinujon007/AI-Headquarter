@@ -1,4 +1,4 @@
-import { OfficeRoom, buildTeamContext, normalizeDeliverable } from './OfficeRoom';
+import { OfficeRoom, buildTeamContext, normalizeDeliverable, safeForLog } from './OfficeRoom';
 
 // ponytail: no Colyseus boot — Object.create skips the Room/MemoryStore constructors,
 // we inject only the private fields each method actually touches. Full-room integration
@@ -491,5 +491,27 @@ describe('batch reporting never claims work that failed', () => {
         expect(titles).toEqual([]);
         expect(failedTitles).toHaveLength(2);
         expect(outputPaths).toEqual([]);
+    });
+});
+
+describe('safeForLog', () => {
+    const LF = String.fromCharCode(10);
+    const CR = String.fromCharCode(13);
+    const NUL = String.fromCharCode(0);
+
+    it('collapses line breaks so a value cannot forge a log entry', () => {
+        const out = safeForLog('Fiona' + CR + LF + '[ADMIN] granted');
+        expect(out).toBe('Fiona [ADMIN] granted');
+        expect(out.includes(LF)).toBe(false);
+        expect(out.includes(CR)).toBe(false);
+    });
+
+    it('strips control characters and truncates', () => {
+        expect(safeForLog('a' + NUL + 'b')).toBe('ab');
+        expect(safeForLog('x'.repeat(500), 50)).toHaveLength(50);
+    });
+
+    it('uses the message of an Error', () => {
+        expect(safeForLog(new Error('boom' + LF + 'forged'))).toBe('boom forged');
     });
 });

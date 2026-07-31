@@ -115,6 +115,15 @@ export function normalizeDeliverable(
     return { content: unfenced, extension: isCode ? 'js' : 'md' };
 }
 
+// Strips line breaks and control characters from untrusted values before they are
+// logged. The /api/logs ring buffer sanitises what the dashboard sees, but console
+// output also goes straight to the operator's terminal unfiltered — an agent name or
+// model error containing a newline can forge a log line there.
+export function safeForLog(value: unknown, max = 200): string {
+    const raw = value instanceof Error ? value.message : String(value);
+    return raw.replace(/[\r\n\u2028\u2029]+/g, ' ').replace(/[\u0000-\u001F\u007F]/g, '').slice(0, max);
+}
+
 export class OfficeRoom extends Room<OfficeState> {
     private static activeRoom: OfficeRoom | null = null;
 
@@ -557,7 +566,7 @@ Example — CEO says "thanks, looks great":
         } catch (err) {
             // Honest failure — do NOT pretend work is being delegated. Log the real
             // cause for operators (this feeds /api/logs and the dashboard Logs page).
-            console.error('[PA] model call failed:', err instanceof Error ? `${err.message}${err.cause ? ` (${err.cause})` : ''}` : err);
+            console.error('[PA] model call failed: %s', safeForLog(err instanceof Error ? `${err.message}${err.cause ? ` (${err.cause})` : ''}` : err));
             fullResponse = 'Could not reach the model — check that Ollama is running, or configure an API key in Settings.';
             emit({ type: 'token', agentId: 'pa', token: fullResponse });
             emit({ type: 'done', agentId: 'pa' });
@@ -870,7 +879,7 @@ Example — CEO says "thanks, looks great":
             return { agentName: agent.config.name, excerpt: output.slice(0, 2500) };
 
         } catch (err) {
-            console.error(`[${agentId}] runSpecialistTask error:`, err);
+            console.error('[%s] runSpecialistTask error: %s', safeForLog(agentId, 40), safeForLog(err));
             agentState.action = 'idle';
             agentState.currentTask = '';
             agent.currentTask = '';
@@ -926,7 +935,7 @@ Example — CEO says "thanks, looks great":
             if (BOARD_SEATS[i]) seatAssignments[p] = BOARD_SEATS[i];
         });
 
-        console.log(`[Board] Wrapup meeting: ${participants.join(', ')} — topic: ${topic.slice(0, 60)}`);
+        console.log('[Board] Wrapup meeting: %s — topic: %s', safeForLog(participants.join(', '), 120), safeForLog(topic, 60));
         this.broadcast('board:started', { type: 'board:started', participants, topic, seatAssignments });
 
         participants.forEach((p, i) => {
@@ -1080,7 +1089,7 @@ Example — CEO says "thanks, looks great":
         try {
             await hireAgentObj.initialize();
         } catch (err) {
-            console.error(`[hire] ${name} failed to initialize:`, err);
+            console.error('[hire] %s failed to initialize: %s', safeForLog(name, 50), safeForLog(err));
             this.state.agents.delete(id);
             // ponytail: the slot stays consumed. Releasing it would mean decrementing a
             // counter another concurrent hire may already have claimed; burning one of six
