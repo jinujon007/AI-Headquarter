@@ -70,6 +70,10 @@ export function useOfficeWs() {
     paHeadingToCeo: false,
   });
 
+  // Reconnect timers fire long after this render; going through a ref keeps them
+  // from closing over `connect` before it is declared.
+  const connectRef = useRef<(() => void) | null>(null);
+
   const connect = useCallback(async () => {
     if (roomRef.current) return;
 
@@ -206,18 +210,19 @@ export function useOfficeWs() {
       room.onLeave(() => {
         setState((prev) => ({ ...prev, connected: false }));
         roomRef.current = null;
-        setTimeout(connect, 3000);
+        setTimeout(() => connectRef.current?.(), 3000);
       });
 
       // All handlers registered — pull the initial state (pushing from the
       // server's onJoin would race these registrations).
       room.send("sync-request");
     } catch {
-      setTimeout(connect, 5000);
+      setTimeout(() => connectRef.current?.(), 5000);
     }
   }, []);
 
   useEffect(() => {
+    connectRef.current = connect;
     connect();
     return () => {
       roomRef.current?.leave();

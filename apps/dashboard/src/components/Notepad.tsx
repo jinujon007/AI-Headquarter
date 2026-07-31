@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { StickyNote, Save, Trash2 } from "lucide-react";
+import { StickyNote, Trash2 } from "lucide-react";
 
 const STORAGE_KEY = "tenacitas-notepad";
 
@@ -28,17 +28,13 @@ export function Notepad() {
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     setSaved(false);
     saveTimerRef.current = setTimeout(() => {
-      save();
+      const now = new Date();
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ text, ts: now.toISOString() }));
+      setSaved(true);
+      setLastSaved(now);
     }, 2000);
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [text]);
-
-  const save = () => {
-    const now = new Date();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ text, ts: now.toISOString() }));
-    setSaved(true);
-    setLastSaved(now);
-  };
 
   const clear = () => {
     setText("");

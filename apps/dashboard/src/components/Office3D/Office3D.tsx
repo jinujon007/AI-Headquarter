@@ -26,7 +26,7 @@ import { CeoChat } from '@/components/CeoChat';
 // the meeting is active. Module-scope so Office3D re-renders don't remount it.
 function BoardSeatAvatar({ agent, seat }: { agent: AgentConfig; seat: Vector3 }) {
   const WALK_MS = 2000;
-  const startRef = useRef(performance.now());
+  const startRef = useRef(0);
   const groupRef = useRef<Group>(null!);
   const from = useMemo(
     () => new Vector3(agent.position[0], 0.6, agent.position[2]),
@@ -34,6 +34,8 @@ function BoardSeatAvatar({ agent, seat }: { agent: AgentConfig; seat: Vector3 })
   );
 
   useFrame(() => {
+    // Seeded on the first frame — reading the clock during render is impure.
+    if (startRef.current === 0) startRef.current = performance.now();
     const rawT = Math.min((performance.now() - startRef.current) / WALK_MS, 1);
     const smoothT = rawT < 0.5
       ? 4 * rawT * rawT * rawT
@@ -57,12 +59,44 @@ function BoardSeatAvatar({ agent, seat }: { agent: AgentConfig; seat: Vector3 })
   );
 }
 
+// T-081: PA walks to CEO Corner on final report delivery (3 s, ease-in-out).
+// Module scope: a component created during render is remounted every render.
+function PAWalkToCeo() {
+  const WALK_MS = 3000;
+  const startRef = useRef(0);
+  const groupRef = useRef<Group>(null!);
+  const FROM = new Vector3(-5, 0.2, -4);      // PA desk (matches AgentDesk.x/pa-desk position)
+  const TO   = new Vector3(CEO_ZONE[0], 0.2, CEO_ZONE[2]); // CEO Corner
+
+  useFrame(() => {
+    if (startRef.current === 0) startRef.current = performance.now();
+    const elapsed = performance.now() - startRef.current;
+    const rawT    = Math.min(elapsed / WALK_MS, 1);
+    const smoothT = rawT < 0.5
+      ? 4 * rawT * rawT * rawT
+      : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
+    groupRef.current?.position.lerpVectors(FROM, TO, smoothT);
+  });
+
+  return (
+    <group ref={groupRef}>
+      <VoxelAvatar
+        agent={AGENTS.find(a => a.id === 'pa')!}
+        position={[0, 0, 0]}
+        isWorking={false}
+        isThinking={true}
+        isError={false}
+      />
+    </group>
+  );
+}
+
 export default function Office3D() {
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [interactionModal, setInteractionModal] = useState<string | null>(null);
   const [controlMode, setControlMode] = useState<'orbit' | 'fps'>('orbit');
   const [showChat, setShowChat] = useState(false);
-  const [avatarPositions, setAvatarPositions] = useState<Map<string, any>>(new Map());
+  const [avatarPositions, setAvatarPositions] = useState<Map<string, Vector3>>(new Map());
   const [toasts, setToasts] = useState<Array<{ id: string; title: string; outputPath?: string; failed: boolean }>>([]);
   const seenTaskIds = useRef<Set<string>>(new Set());
 
@@ -196,7 +230,7 @@ export default function Office3D() {
     setInteractionModal(null);
   };
 
-  const handleAvatarPositionUpdate = (id: string, position: any) => {
+  const handleAvatarPositionUpdate = (id: string, position: Vector3) => {
     setAvatarPositions(prev => new Map(prev).set(id, position));
   };
 
@@ -220,35 +254,6 @@ export default function Office3D() {
     { position: new Vector3(9, 0, 0), radius: 0.4 },
   ];
 
-  // T-081: PA walks to CEO Corner on final report delivery (3 s, ease-in-out)
-  function PAWalkToCeo() {
-    const WALK_MS = 3000;
-    const startRef = useRef(performance.now());
-    const groupRef = useRef<Group>(null!);
-    const FROM = new Vector3(-5, 0.2, -4);      // PA desk (matches AgentDesk.x/pa-desk position)
-    const TO   = new Vector3(CEO_ZONE[0], 0.2, CEO_ZONE[2]); // CEO Corner
-
-    useFrame(() => {
-      const elapsed = performance.now() - startRef.current;
-      const rawT    = Math.min(elapsed / WALK_MS, 1);
-      const smoothT = rawT < 0.5
-        ? 4 * rawT * rawT * rawT
-        : 1 - Math.pow(-2 * rawT + 2, 3) / 2;
-      groupRef.current?.position.lerpVectors(FROM, TO, smoothT);
-    });
-
-    return (
-      <group ref={groupRef}>
-        <VoxelAvatar
-          agent={AGENTS.find(a => a.id === 'pa')!}
-          position={[0, 0, 0]}
-          isWorking={false}
-          isThinking={true}
-          isError={false}
-        />
-      </group>
-    );
-  }
 
   // Offset for the fixed dock (68px left) and status bar (32px bottom) so overlays are never clipped
   return (
