@@ -67,6 +67,8 @@ interface BatchState {
     completed: number;
     failed: number;
     titles: string[];
+    failedTitles: string[];
+    failedAgents: string[];
     outputPaths: string[];
     participants: string[];
     topic: string;
@@ -701,6 +703,8 @@ Example — CEO says "thanks, looks great":
             completed: 0,
             failed: 0,
             titles: [],
+            failedTitles: [],
+            failedAgents: [],
             outputPaths: [],
             participants: valid,
             topic: ceoContent,
@@ -860,7 +864,7 @@ Example — CEO says "thanks, looks great":
                 targetId: 'pa',
             });
 
-            if (batchId) this.onTaskComplete(batchId, taskTitle, outputPath, false);
+            if (batchId) this.onTaskComplete(batchId, agentId, taskTitle, outputPath, false);
 
             // Cap the excerpt so downstream prompts stay small enough for local 3B models.
             return { agentName: agent.config.name, excerpt: output.slice(0, 2500) };
@@ -878,7 +882,7 @@ Example — CEO says "thanks, looks great":
             });
             this.broadcast('agent:status', { type: 'agent:status', agentId, status: 'idle' });
 
-            if (batchId) this.onTaskComplete(batchId, taskTitle, undefined, true);
+            if (batchId) this.onTaskComplete(batchId, agentId, taskTitle, undefined, true);
             return null;
         } finally {
             // Release the thinking lock acquired in delegate()
@@ -886,27 +890,34 @@ Example — CEO says "thanks, looks great":
         }
     }
 
-    private onTaskComplete(batchId: string, title: string, outputPath: string | undefined, failed: boolean) {
+    private onTaskComplete(batchId: string, agentId: string, title: string, outputPath: string | undefined, failed: boolean) {
         const batch = this.pendingBatchTasks.get(batchId);
         if (!batch) return;
         batch.completed++;
-        if (failed) batch.failed++;
-        batch.titles.push(title);
+        // Succeeded and failed titles are kept apart so the board wrapup and the PA's
+        // report to the CEO cannot claim a deliverable that was never produced.
+        if (failed) {
+            batch.failed++;
+            batch.failedTitles.push(title);
+            batch.failedAgents.push(agentId);
+        } else {
+            batch.titles.push(title);
+        }
         if (outputPath) batch.outputPaths.push(outputPath);
 
         if (batch.completed >= batch.total) {
             this.pendingBatchTasks.delete(batchId);
             // F-04: Board meeting runs AFTER tasks complete, lightweight (no extra LLM calls)
             if (batch.participants.length >= 2) {
-                this.runLightweightBoardWrapup(batch.participants, batch.topic, batch.titles).catch(console.error);
+                this.runLightweightBoardWrapup(batch.participants, batch.topic, batch.titles, batch.failedAgents).catch(console.error);
             }
-            this.synthesizeAndReport(batch.titles, batch.outputPaths, batch.topic, batch.provider, batch.apiKey).catch(console.error);
+            this.synthesizeAndReport(batch.titles, batch.failedTitles, batch.outputPaths, batch.topic, batch.provider, batch.apiKey).catch(console.error);
         }
     }
 
     // ─── BOARD WRAPUP (lightweight — no extra LLM calls) ────────────────────
 
-    private async runLightweightBoardWrapup(participants: string[], topic: string, completedTitles: string[]): Promise<void> {
+    private async runLightweightBoardWrapup(participants: string[], topic: string, completedTitles: string[], failedAgents: string[] = []): Promise<void> {
         if (this.isBoardMeetingActive) return;
         this.isBoardMeetingActive = true;
 
@@ -926,9 +937,12 @@ Example — CEO says "thanks, looks great":
                 agentState.y = BOARD_SEATS[i].y;
                 agentState.action = 'in-meeting';
                 this.broadcast('agent:status', { type: 'agent:status', agentId: p, status: 'in-meeting' });
-                // Template message — no LLM call
+                // Template message — no LLM call. Agents whose task failed say so;
+                // they used to announce a deliverable that did not exist.
                 const title = completedTitles.find(t => t) || 'my task';
-                const msg = `My deliverable for "${title.slice(0, 40)}" is ready.`;
+                const msg = failedAgents.includes(p)
+                    ? `I could not finish my part of "${topic.slice(0, 40)}".`
+                    : `My deliverable for "${title.slice(0, 40)}" is ready.`;
                 this.broadcast('agent:message', { type: 'agent:message', agentId: p, message: msg, targetId: 'pa' });
             }
         });
@@ -957,6 +971,7 @@ Example — CEO says "thanks, looks great":
 
     private async synthesizeAndReport(
         taskTitles: string[],
+        failedTitles: string[],
         outputPaths: string[],
         topic: string,
         provider?: string,
@@ -1004,7 +1019,9 @@ Example — CEO says "thanks, looks great":
         } catch {
             this.broadcast('agent:message', {
                 type: 'agent:message', agentId: 'pa',
-                message: `All ${taskTitles.length} tasks completed. Check the Tasks page for output files.`,
+                message: failedTitles.length === 0
+                    ? `All ${taskTitles.length} tasks completed. Check the Tasks page for output files.`
+                    : `${taskTitles.length} of ${taskTitles.length + failedTitles.length} tasks completed; ${failedTitles.length} failed with no output. Check the Tasks page for details.`,
                 targetId: 'ceo', isReport: true,
             });
         } finally {

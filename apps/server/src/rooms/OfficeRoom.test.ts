@@ -422,3 +422,51 @@ describe('runSpecialistTask — a deliverable that never lands is a failed task'
         expect(broadcastTypes(room)).toContain('task:completed');
     });
 });
+
+describe('batch reporting never claims work that failed', () => {
+    // Regression: onTaskComplete pushed every title into batch.titles regardless of
+    // outcome, so a batch where everything failed still produced a board wrapup of
+    // "My deliverable is ready" and a PA report headed "Tasks completed".
+    function batchRoom(total: number) {
+        const room = makeRoom();
+        room.runLightweightBoardWrapup = jest.fn().mockResolvedValue(undefined);
+        room.synthesizeAndReport = jest.fn().mockResolvedValue(undefined);
+        room.pendingBatchTasks.set('b1', {
+            total, completed: 0, failed: 0,
+            titles: [], failedTitles: [], failedAgents: [], outputPaths: [],
+            participants: ['copywriter', 'dev'], topic: 'landing page',
+        });
+        return room;
+    }
+
+    it('keeps failed titles out of the completed list', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', 'output/copywriter/a.md', false);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const [titles, failedTitles, outputPaths] = room.synthesizeAndReport.mock.calls[0];
+        expect(titles).toEqual(['Write copy']);
+        expect(failedTitles).toEqual(['Build page']);
+        expect(outputPaths).toEqual(['output/copywriter/a.md']);
+    });
+
+    it('tells the board wrapup which agents failed', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', 'output/copywriter/a.md', false);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const failedAgents = room.runLightweightBoardWrapup.mock.calls[0][3];
+        expect(failedAgents).toEqual(['dev']);
+    });
+
+    it('reports nothing completed when the whole batch fails', () => {
+        const room = batchRoom(2);
+        room.onTaskComplete('b1', 'copywriter', 'Write copy', undefined, true);
+        room.onTaskComplete('b1', 'dev', 'Build page', undefined, true);
+
+        const [titles, failedTitles, outputPaths] = room.synthesizeAndReport.mock.calls[0];
+        expect(titles).toEqual([]);
+        expect(failedTitles).toHaveLength(2);
+        expect(outputPaths).toEqual([]);
+    });
+});
