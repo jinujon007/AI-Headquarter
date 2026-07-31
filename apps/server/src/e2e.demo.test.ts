@@ -15,6 +15,7 @@ import { MemoryStore } from './memory/MemoryStore';
 import { TaskManager } from './tasks/TaskManager';
 import { ToolExecutor } from './tools/ToolExecutor';
 import { existsSync, unlinkSync } from 'fs';
+import path from 'path';
 import type { Server } from 'http';
 import type { AddressInfo } from 'net';
 
@@ -40,6 +41,17 @@ const stubAdapter = {
         return { content, usage: { prompt: 100, completion: 50 }, latency: 5 };
     }),
 };
+
+function canSymlink(): boolean {
+    const { symlinkSync, rmSync, mkdtempSync } = require('fs');
+    const os = require('os');
+    try {
+        const dir = mkdtempSync(path.join(os.tmpdir(), 'symcheck-'));
+        symlinkSync(path.join(dir, 'nope'), path.join(dir, 'link'));
+        rmSync(dir, { recursive: true, force: true });
+        return true;
+    } catch { return false; }
+}
 
 describe('E2E demo path — CEO command → delegation → files → report', () => {
     let server: Server;
@@ -187,4 +199,40 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
         expect(res.status).toBe(503);
         (OfficeRoom as any).activeRoom = room;
     });
+    describe('GET /api/output containment', () => {
+        const cases: Array<[string, string]> = [
+            ['rejects a parent-directory traversal', '../../package.json'],
+            ['rejects an absolute path', process.platform === 'win32' ? 'C:/Windows/win.ini' : '/etc/passwd'],
+            ['rejects an encoded traversal', 'output/../../package.json'],
+            ['rejects a path that only prefix-matches the root', '../outputs-elsewhere/secret.md'],
+        ];
+
+        for (const [title, attempt] of cases) {
+            it(title, async () => {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent(attempt)}`);
+                expect(res.status).toBe(400);
+                expect((await res.json()).error).toBe('Invalid path');
+            });
+        }
+
+        // Creating a symlink needs elevation or Developer Mode on Windows. Rather than
+        // returning early and reporting a silent pass, detect the capability up front so
+        // an unexercised test shows up as skipped. Linux CI runs it for real.
+        (canSymlink() ? it : it.skip)('rejects a symlink inside output/ that points outside it', async () => {
+            const { symlinkSync, mkdirSync, rmSync, existsSync: exists } = require('fs');
+            const outDir = path.resolve(process.cwd(), 'output');
+            const link = path.join(outDir, 'escape-link.md');
+            mkdirSync(outDir, { recursive: true });
+            if (exists(link)) rmSync(link, { force: true });
+            symlinkSync(path.resolve(process.cwd(), 'package.json'), link);
+            try {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent('output/escape-link.md')}`);
+                expect(res.status).toBe(400);
+            } finally {
+                rmSync(link, { force: true });
+            }
+        });
+    });
+
 });
+

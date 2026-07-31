@@ -5,7 +5,7 @@ import { createServer } from 'http';
 import { OfficeRoom } from './rooms/OfficeRoom';
 import * as os from 'os';
 import path from 'path';
-import { readFile } from 'fs/promises';
+import { readFile, realpath } from 'fs/promises';
 
 // ─── RATE LIMITER ────────────────────────────────────────────────────────────
 interface RateLimitEntry { count: number; resetTime: number; }
@@ -101,6 +101,12 @@ function requireServerKey(req: Request, res: Response, next: NextFunction) {
     return;
   }
   next();
+}
+
+// True when `target` is the directory `root` itself or something beneath it.
+// Compared on resolved absolute paths — never on the raw request string.
+function isInside(target: string, root: string): boolean {
+  return target === root || target.startsWith(root + path.sep);
 }
 
 // ─── ROUTES ──────────────────────────────────────────────────────────────────
@@ -205,7 +211,7 @@ app.get('/api/settings', async (_req, res) => {
   res.json({ ok: true, ...(await room.getSettings()) });
 });
 
-app.post('/api/settings', requireServerKey, async (req, res) => {
+app.post('/api/settings', requireServerKey, rateLimiter, async (req, res) => {
   const room = OfficeRoom.getActiveRoom();
   if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
   const { budgetUsd } = req.body || {};
@@ -222,16 +228,25 @@ app.get('/api/system', (_req, res) => {
   res.json({ cpu: Math.round(os.loadavg()[0] * 100) / 100, ram: Math.round(((totalMem - freeMem) / totalMem) * 100), disk: 0 });
 });
 
-app.get('/api/output', async (req, res) => {
+// Rate-limited: this reads files off disk, so it should not be a free scraping loop.
+app.get('/api/output', rateLimiter, async (req, res) => {
   const filePath = (req.query.path as string) || '';
   if (!filePath) { res.status(400).json({ ok: false, error: 'Invalid path' }); return; }
   try {
     const allowedRoot = path.resolve(process.cwd(), 'output');
     const resolved    = path.resolve(process.cwd(), filePath);
-    if (!resolved.startsWith(allowedRoot + path.sep) && resolved !== allowedRoot) {
+    // Two-stage containment. path.resolve() collapses ../ but does NOT follow symlinks,
+    // so a link inside output/ pointing anywhere on disk would pass a resolve-only check
+    // and then be read. realpath() resolves the link; we re-check the real location and
+    // compare against the real root (the root itself may sit behind a symlink too).
+    if (!isInside(resolved, allowedRoot)) {
       res.status(400).json({ ok: false, error: 'Invalid path' }); return;
     }
-    const content = await readFile(resolved, 'utf-8');
+    const [realRoot, realTarget] = await Promise.all([realpath(allowedRoot), realpath(resolved)]);
+    if (!isInside(realTarget, realRoot)) {
+      res.status(400).json({ ok: false, error: 'Invalid path' }); return;
+    }
+    const content = await readFile(realTarget, 'utf-8');
     res.json({ ok: true, content, path: filePath });
   } catch {
     res.status(404).json({ ok: false, error: 'File not found' });
