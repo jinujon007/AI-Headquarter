@@ -1,8 +1,40 @@
 /**
- * Pure state transitions for the office WebSocket events — extracted from
- * use-office-ws so the logic is unit-testable without a Colyseus connection.
+ * State transitions and outbound bridges for the office WebSocket events —
+ * extracted from use-office-ws so the logic is unit-testable without a
+ * Colyseus connection.
  */
 import type { TaskCreatedPayload, TaskCompletedPayload, TaskFailedPayload } from "@aihq/types";
+
+// Fire-and-forget POST to the local activities API so the home page stats stay current.
+export function logActivity(
+  type: string,
+  description: string,
+  status: "success" | "error" | "pending" | "running",
+  agent?: string,
+) {
+  fetch("/api/activities", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type, description, status, agent: agent ?? null }),
+  }).catch(() => {/* best-effort — never block UI */});
+}
+
+// Fire-and-forget POST to the notifications API. Without this the TopBar bell has no
+// producer and sits permanently empty — the activity feed records everything, the bell
+// only carries the events worth interrupting the CEO for.
+// ponytail: notable events only (task done/failed, hire); tool_use is far too noisy.
+export function notify(
+  title: string,
+  message: string,
+  type: "info" | "success" | "warning" | "error",
+  link?: string,
+) {
+  fetch("/api/notifications", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title, message, type, link }),
+  }).catch(() => {/* best-effort — never block UI */});
+}
 
 export interface TaskEvent {
   id: string;

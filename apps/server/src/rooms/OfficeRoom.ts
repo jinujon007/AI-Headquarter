@@ -89,6 +89,30 @@ export function buildTeamContext(priorOutputs: TeamOutput[]): string {
     return `\n\nWork already completed by your teammates on this project — build directly on it and keep names, claims, and copy consistent:\n${blocks}`;
 }
 
+// Picks the file extension for a specialist's deliverable and strips the wrapping small
+// models like to add. Matching only at index 0 saved real HTML documents as `.md` whenever
+// the model prefixed a stray title line or a ```html fence — a landing page a browser
+// renders as plain text is a broken deliverable, which is the whole point of the demo.
+// The 500-char window is what separates "document with a preamble" from a markdown file
+// that merely mentions HTML further down.
+export function normalizeDeliverable(
+    rawOutput: string,
+    agentId: string,
+): { content: string; extension: 'html' | 'js' | 'md' } {
+    const unfenced = rawOutput
+        .replace(/^\s*```[a-zA-Z]*\s*\n/, '')
+        .replace(/\n\s*```\s*$/, '')
+        .trim();
+
+    const docIdx = unfenced.search(/<!DOCTYPE html|<html[\s>]/i);
+    if (docIdx !== -1 && docIdx < 500) {
+        return { content: unfenced.slice(docIdx), extension: 'html' };
+    }
+
+    const isCode = agentId === 'dev' && /\b(def |function |import |class )/.test(unfenced);
+    return { content: unfenced, extension: isCode ? 'js' : 'md' };
+}
+
 export class OfficeRoom extends Room<OfficeState> {
     private static activeRoom: OfficeRoom | null = null;
 
@@ -790,12 +814,10 @@ Example — CEO says "thanks, looks great":
             const output = result.content.trim();
             if (!output) throw new Error('Empty output from specialist');
 
-            const isHTML = output.trimStart().startsWith('<!DOCTYPE') || output.trimStart().startsWith('<html');
-            const isCode = !isHTML && agentId === 'dev' && (output.includes('def ') || output.includes('function ') || output.includes('import ') || output.includes('class '));
-            const ext = isHTML ? 'html' : isCode ? 'js' : 'md';
+            const { content: deliverable, extension: ext } = normalizeDeliverable(output, agentId);
 
             const toolResult = await this.toolExecutor.execute('write_file', {
-                content: output, agentId, filename: taskTitle.slice(0, 40), extension: ext,
+                content: deliverable, agentId, filename: taskTitle.slice(0, 40), extension: ext,
             });
 
             // Persist token usage

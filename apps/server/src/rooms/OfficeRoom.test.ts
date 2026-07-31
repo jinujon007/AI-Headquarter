@@ -1,4 +1,4 @@
-import { OfficeRoom, buildTeamContext } from './OfficeRoom';
+import { OfficeRoom, buildTeamContext, normalizeDeliverable } from './OfficeRoom';
 
 // ponytail: no Colyseus boot — Object.create skips the Room/MemoryStore constructors,
 // we inject only the private fields each method actually touches. Full-room integration
@@ -309,5 +309,49 @@ describe('buildTeamContext — cross-agent context passing', () => {
         expect(ctx).toContain('Output from Cleo');
         expect(ctx).toContain('Waste less, earn more');
         expect(ctx).toContain('build directly on it');
+    });
+});
+
+describe('normalizeDeliverable', () => {
+    // Regression: live run 2026-07-31 11:09:22 produced a complete HTML document behind a
+    // one-line title, and it was saved as .md — a landing page no browser would render.
+    it('saves HTML as .html even when the model prefixes a stray title line', () => {
+        const raw = 'Manage Food Waste with RecipeKeeper\n\n<!DOCTYPE html>\n<html lang="en">\n<head></head>\n</html>';
+        const { content, extension } = normalizeDeliverable(raw, 'dev');
+        expect(extension).toBe('html');
+        expect(content.startsWith('<!DOCTYPE html>')).toBe(true);
+        expect(content).not.toContain('Manage Food Waste with RecipeKeeper');
+    });
+
+    it('unwraps a ```html fence', () => {
+        const raw = '```html\n<!DOCTYPE html>\n<html><body>hi</body></html>\n```';
+        const { content, extension } = normalizeDeliverable(raw, 'dev');
+        expect(extension).toBe('html');
+        expect(content.startsWith('<!DOCTYPE html>')).toBe(true);
+        expect(content.endsWith('</html>')).toBe(true);
+    });
+
+    it('still detects a document that starts with <html> directly', () => {
+        const { extension } = normalizeDeliverable('<html><body>x</body></html>', 'dev');
+        expect(extension).toBe('html');
+    });
+
+    it('leaves genuine markdown as .md and does not slice it', () => {
+        const raw = '# FoodWise\n\n## Tagline\nReduce food waste.';
+        const { content, extension } = normalizeDeliverable(raw, 'copywriter');
+        expect(extension).toBe('md');
+        expect(content).toBe(raw);
+    });
+
+    // The 500-char window: prose that merely mentions HTML far down is not a document.
+    it('does not treat a late <html> mention in prose as a document', () => {
+        const raw = `${'Some notes about the page. '.repeat(40)}\nUse <html> tags here.`;
+        expect(normalizeDeliverable(raw, 'copywriter').extension).toBe('md');
+    });
+
+    it('classifies non-HTML dev output containing code as .js', () => {
+        expect(normalizeDeliverable('function build() { return 1; }', 'dev').extension).toBe('js');
+        // same text from a writer is prose, not a program
+        expect(normalizeDeliverable('function build() { return 1; }', 'copywriter').extension).toBe('md');
     });
 });

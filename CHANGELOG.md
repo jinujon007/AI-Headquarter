@@ -1,3 +1,13 @@
+# Changelog
+
+All notable changes to AI HQ are documented here.  
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)  
+Versioning: [Semantic Versioning](https://semver.org/)
+
+---
+
+## [Unreleased]
+
 # [1.1.0](https://github.com/jinujon007/AI-Headquarter/compare/v1.0.0...v1.1.0) (2026-07-28)
 
 
@@ -16,16 +26,6 @@
 * **dashboard:** demo-truth UI — board meetings, hired desks, honest chat ([186df4f](https://github.com/jinujon007/AI-Headquarter/commit/186df4fbf18aed3e4d62002d09b7db62abef91ba))
 * **hiring:** chat-driven hiring works; parser honors partial JSON from small models ([22b5be0](https://github.com/jinujon007/AI-Headquarter/commit/22b5be0397863c820600bcd1ef45858a184a49ff))
 * **server:** delegation overhaul, security hardening, real costs ([b7fa442](https://github.com/jinujon007/AI-Headquarter/commit/b7fa442c9565ea4d47eafc0a11e18ec14428687b))
-
-# Changelog
-
-All notable changes to AI HQ are documented here.  
-Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)  
-Versioning: [Semantic Versioning](https://semver.org/)
-
----
-
-## [Unreleased]
 
 ### Completion Sprint — live-verified core loop [Brain: Claude Fable] [2026-07-28]
 

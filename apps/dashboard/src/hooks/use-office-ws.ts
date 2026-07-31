@@ -36,7 +36,7 @@ export interface AgentHiredEvent {
   deskPosition: [number, number, number];
 }
 
-import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks } from "./office-ws-handlers";
+import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks, logActivity, notify } from "./office-ws-handlers";
 export type { TaskEvent } from "./office-ws-handlers";
 import type { TaskEvent } from "./office-ws-handlers";
 
@@ -55,19 +55,6 @@ export interface OfficeWsState {
   paHeadingToCeo: boolean;   // true when PA is walking to CEO corner for a report delivery
 }
 
-// Fire-and-forget POST to the local activities API so the home page stats stay current
-function logActivity(
-  type: string,
-  description: string,
-  status: "success" | "error" | "pending" | "running",
-  agent?: string,
-) {
-  fetch("/api/activities", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ type, description, status, agent: agent ?? null }),
-  }).catch(() => {/* best-effort — never block UI */});
-}
 
 export function useOfficeWs() {
   const clientRef = useRef<Client | null>(null);
@@ -148,6 +135,7 @@ export function useOfficeWs() {
             : { ...prev, hiredAgents: [...prev.hiredAgents, hired] }
         );
         logActivity("agent_hired", `New agent hired: ${hired.name} (${hired.role})`, "success");
+        notify("New hire", `${hired.name} joined as ${hired.role}`, "success", "/office");
       });
 
       room.onMessage("board:started", (data: BoardStartedPayload) => {
@@ -177,6 +165,7 @@ export function useOfficeWs() {
           "success",
           t.assignedTo || t.agentId,
         );
+        notify("Task completed", t.title || t.id, "success", "/tasks");
       });
 
       room.onMessage("task:failed", (data: TaskFailedPayload) => {
@@ -187,6 +176,12 @@ export function useOfficeWs() {
           `Failed: ${t.title || t.id}${t.error ? ` — ${String(t.error).slice(0, 100)}` : ""}`,
           "error",
           t.assignedTo || t.agentId,
+        );
+        notify(
+          "Task failed",
+          `${t.title || t.id}${t.error ? ` — ${String(t.error).slice(0, 100)}` : ""}`,
+          "error",
+          "/tasks",
         );
       });
 
