@@ -129,7 +129,7 @@ app.get('/api/agents', (_req, res) => {
   res.json(room ? room.getAgentList() : []);
 });
 
-app.post('/api/agents/hire', requireServerKey, rateLimiter, (req, res) => {
+app.post('/api/agents/hire', requireServerKey, rateLimiter, async (req, res) => {
   const room = OfficeRoom.getActiveRoom();
   if (!room) { res.status(503).json({ ok: false, error: 'No active room.' }); return; }
   const { name, role } = req.body || {};
@@ -142,10 +142,15 @@ app.post('/api/agents/hire', requireServerKey, rateLimiter, (req, res) => {
   }
   const provider = req.headers['x-llm-provider'] as string | undefined;
   const apiKey   = req.headers['x-api-key']     as string | undefined;
-  const agent = room.hireAgent(name, role, provider, apiKey);
-  // hireAgent refuses past the 6-hire cap by returning { error }. Reporting that as
-  // ok:true made the dashboard show a successful hire for an agent that never existed.
-  if (agent?.error) { res.status(409).json({ ok: false, error: agent.error }); return; }
+  const agent = await room.hireAgent(name, role, provider, apiKey);
+  // hireAgent refuses by returning { error, code }. Reporting that as ok:true made the
+  // dashboard show a successful hire for an agent that never existed.
+  // 409 = office is full (a client-side conflict); 502 = the agent could not initialize
+  // because the model provider was unreachable (an upstream failure).
+  if (agent?.error) {
+    res.status(agent.code === 'office_full' ? 409 : 502).json({ ok: false, error: agent.error });
+    return;
+  }
   res.json({ ok: true, agent });
 });
 

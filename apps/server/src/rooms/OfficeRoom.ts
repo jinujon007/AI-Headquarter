@@ -381,7 +381,7 @@ this.onMessage('assign-task', async (client, message) => {
                             }
                         } else if (decision.toolCall.name === 'hire_agent') {
                             const { name, role } = decision.toolCall.params;
-                            this.hireAgent(name || 'Specialist', role || 'Specialist', this.sessionProvider, this.sessionApiKey);
+                            await this.hireAgent(name || 'Specialist', role || 'Specialist', this.sessionProvider, this.sessionApiKey);
                         } else {
                             const toolParams = { ...decision.toolCall.params, agentId: id };
                             const result = await this.toolExecutor.execute(decision.toolCall.name, toolParams);
@@ -543,7 +543,7 @@ Example — CEO says "thanks, looks great":
             else { fullResponse = raw || 'On it.'; }
             // Chat-driven hiring: "hire a financial analyst" spawns a real agent + desk
             if (parsed?.hire?.name && parsed.hire.role) {
-                const hired = this.hireAgent(parsed.hire.name, parsed.hire.role, provider, apiKey);
+                const hired = await this.hireAgent(parsed.hire.name, parsed.hire.role, provider, apiKey);
                 if (hired?.error) fullResponse += ` (Couldn't hire: ${hired.error})`;
             }
             // Pre-run cost estimate in the PA acknowledgment — BYOK only ($0 estimates are skipped)
@@ -1032,9 +1032,9 @@ Example — CEO says "thanks, looks great":
 
     // ─── HIRE AGENT ──────────────────────────────────────────────────────────
 
-    public hireAgent(name: string, role: string, provider?: string, apiKey?: string): any {
+    public async hireAgent(name: string, role: string, provider?: string, apiKey?: string): Promise<any> {
         if (this.hireCount >= 6) {
-            return { error: 'Office full (max 11 agents)' };
+            return { error: 'Office full (max 11 agents)', code: 'office_full' };
         }
 
         // Reserve the slot synchronously to prevent race conditions on concurrent hire calls
@@ -1074,23 +1074,35 @@ Example — CEO says "thanks, looks great":
         const adapter = this.getAdapter(effectiveProvider, effectiveApiKey);
         hireAgentObj.setInferenceAdapter(adapter);
 
-        hireAgentObj.initialize().then(() => {
-            this.coreAgents.set(id, hireAgentObj);
-            this.thinkingLocks.set(id, false);
+        // initialize() used to be fire-and-forget with .catch(console.error). When it
+        // failed the agent was never registered and no desk ever spawned, yet this method
+        // had already returned success — the caller reported a hire that did not exist.
+        try {
+            await hireAgentObj.initialize();
+        } catch (err) {
+            console.error(`[hire] ${name} failed to initialize:`, err);
+            this.state.agents.delete(id);
+            // ponytail: the slot stays consumed. Releasing it would mean decrementing a
+            // counter another concurrent hire may already have claimed; burning one of six
+            // slots on a rare failure is cheaper than handing two agents the same desk.
+            return { error: 'Agent failed to initialize — check that the model provider is reachable.', code: 'init_failed' };
+        }
 
-            this.broadcast('agent:hired', {
-                type: 'agent:hired',
-                agent: { id, name, role, status: 'idle', provider: effectiveProvider || 'ollama', deskPosition: pos },
+        this.coreAgents.set(id, hireAgentObj);
+        this.thinkingLocks.set(id, false);
+
+        this.broadcast('agent:hired', {
+            type: 'agent:hired',
+            agent: { id, name, role, status: 'idle', provider: effectiveProvider || 'ollama', deskPosition: pos },
+        });
+
+        setTimeout(() => {
+            this.broadcast('agent:message', {
+                type: 'agent:message', agentId: id,
+                message: `Hi team. I'm ${name}. Ready to ${role.toLowerCase()}. Assign me a task whenever you need.`,
+                targetId: 'all',
             });
-
-            setTimeout(() => {
-                this.broadcast('agent:message', {
-                    type: 'agent:message', agentId: id,
-                    message: `Hi team. I'm ${name}. Ready to ${role.toLowerCase()}. Assign me a task whenever you need.`,
-                    targetId: 'all',
-                });
-            }, 1500);
-        }).catch(console.error);
+        }, 1500);
 
         return { id, name, role };
     }

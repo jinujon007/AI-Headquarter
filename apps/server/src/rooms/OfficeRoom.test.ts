@@ -359,18 +359,41 @@ describe('normalizeDeliverable', () => {
 describe('hireAgent — office capacity', () => {
     // The 6-hire cap is a documented limit ("max 11 agents" in docs/api.md) that had
     // no test, and its refusal was being reported to the dashboard as ok:true.
-    it('refuses past 6 hires with an error instead of throwing', () => {
+    it('refuses past 6 hires with an error instead of throwing', async () => {
         const room = makeRoom();
         room.hireCount = 6;
-        const result = room.hireAgent('Fiona', 'Financial Analyst');
+        const result = await room.hireAgent('Fiona', 'Financial Analyst');
         expect(result.error).toMatch(/full/i);
+        expect(result.code).toBe('office_full');
     });
 
-    it('does not consume a slot when it refuses', () => {
+    // Regression: initialize() was fire-and-forget with .catch(console.error). On
+    // failure the agent was never registered and no desk spawned, but hireAgent had
+    // already returned { id, name, role } and the API answered ok:true.
+    it('reports an initialize failure instead of a phantom hire', async () => {
+        const room = makeRoom();
+        room.hireCount = 0;
+        room.state.createAgent = jest.fn();
+        room.state.agents.delete = jest.fn();
+        room.getAdapter = () => ({ complete: jest.fn() });
+        const { Agent } = require('@aihq/core');
+        jest.spyOn(Agent.prototype, 'initialize').mockRejectedValue(new Error('ECONNREFUSED'));
+
+        const result = await room.hireAgent('Fiona', 'Financial Analyst');
+
+        expect(result.error).toMatch(/initialize/i);
+        expect(result.code).toBe('init_failed');
+        expect(result.id).toBeUndefined();
+        expect(room.coreAgents.has('hire_0')).toBe(false);
+        expect(room.broadcast).not.toHaveBeenCalledWith('agent:hired', expect.anything());
+        jest.restoreAllMocks();
+    });
+
+    it('does not consume a slot when it refuses', async () => {
         const room = makeRoom();
         room.hireCount = 6;
-        room.hireAgent('Fiona', 'Financial Analyst');
-        room.hireAgent('Sam', 'Designer');
+        await room.hireAgent('Fiona', 'Financial Analyst');
+        await room.hireAgent('Sam', 'Designer');
         expect(room.hireCount).toBe(6);
     });
 });
