@@ -1,5 +1,46 @@
-import { describe, it, expect } from "vitest";
-import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks, type TaskEvent } from "./office-ws-handlers";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { applyTaskCreated, applyTaskCompleted, applyTaskFailed, mapSyncTasks, logActivity, notify, type TaskEvent } from "./office-ws-handlers";
+
+afterEach(() => vi.restoreAllMocks());
+
+// Regression: the TopBar bell polls /api/notifications every 30s but nothing ever
+// POSTed to it, so it was permanently empty. These assert both bridges still fire.
+describe("outbound event bridges", () => {
+  it("notify POSTs a well-formed notification", () => {
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    notify("Task completed", "Write copy", "success", "/tasks");
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/notifications");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({
+      title: "Task completed",
+      message: "Write copy",
+      type: "success",
+      link: "/tasks",
+    });
+  });
+
+  it("logActivity POSTs to the activities API with a null agent when omitted", () => {
+    const fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    logActivity("agent_hired", "New agent hired: Fin (financial analyst)", "success");
+
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/activities");
+    expect(JSON.parse(init.body as string).agent).toBeNull();
+  });
+
+  it("a rejected fetch never throws — the UI must not break on a dead API", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("ECONNREFUSED"); }));
+    expect(() => notify("t", "m", "error")).not.toThrow();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+});
 
 const NOW = 1700000000000;
 
