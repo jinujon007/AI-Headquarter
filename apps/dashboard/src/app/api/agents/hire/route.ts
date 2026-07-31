@@ -14,7 +14,9 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(5000),
     });
-    return NextResponse.json(await res.json());
+    // Propagate the upstream status — a proxy that turns a 409 into a 200 lies at
+    // the HTTP layer, even when the body still carries ok:false.
+    return NextResponse.json(await res.json(), { status: res.status });
   } catch {
     return NextResponse.json({ ok: false, error: 'Server unreachable' }, { status: 503 });
   }
