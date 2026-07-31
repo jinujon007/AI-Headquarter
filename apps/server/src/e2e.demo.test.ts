@@ -215,6 +215,19 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
             });
         }
 
+        // Regression: /api/output first shipped behind the strict 5-per-minute limiter
+        // built for LLM calls, so a user opening a sixth task output got a 429. Reads
+        // have their own, larger bucket now.
+        it('serves a burst of reads well past the write limit', async () => {
+            const results: number[] = [];
+            for (let i = 0; i < 12; i++) {
+                const res = await fetch(`${baseUrl}/api/output?path=${encodeURIComponent('../nope.txt')}`);
+                results.push(res.status);
+            }
+            expect(results.every((s) => s === 400)).toBe(true);
+            expect(results).not.toContain(429);
+        });
+
         // Creating a symlink needs elevation or Developer Mode on Windows. Rather than
         // returning early and reporting a silent pass, detect the capability up front so
         // an unexercised test shows up as skipped. Linux CI runs it for real.

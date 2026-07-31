@@ -20,29 +20,41 @@ setInterval(() => {
   }
 }, 5 * 60_000).unref();
 
-function checkRateLimit(clientId: string): { allowed: boolean; remaining: number } {
+// Reads are cheap and the UI makes them in bursts — opening six task outputs in a
+// row is normal use, not abuse. Only the expensive paths (LLM calls, hiring,
+// settings writes) get the strict budget.
+const READ_RATE_LIMIT = 60;
+
+function checkRateLimit(clientId: string, limit: number): { allowed: boolean; remaining: number } {
   const now = Date.now();
   const entry = rateLimitMap.get(clientId);
   if (!entry || now > entry.resetTime) {
     rateLimitMap.set(clientId, { count: 1, resetTime: now + RATE_WINDOW_MS });
-    return { allowed: true, remaining: RATE_LIMIT - 1 };
+    return { allowed: true, remaining: limit - 1 };
   }
-  if (entry.count >= RATE_LIMIT) return { allowed: false, remaining: 0 };
+  if (entry.count >= limit) return { allowed: false, remaining: 0 };
   entry.count++;
-  return { allowed: true, remaining: RATE_LIMIT - entry.count };
+  return { allowed: true, remaining: limit - entry.count };
 }
 
 // req.ip is already proxy-aware via app.set('trust proxy', 1) — never trust
 // X-Forwarded-For directly, it is spoofable when the server is exposed raw.
-function rateLimiter(req: Request, res: Response, next: NextFunction) {
-  const { allowed, remaining } = checkRateLimit(req.ip || 'unknown');
-  res.setHeader('X-RateLimit-Remaining', remaining.toString());
-  if (!allowed) {
-    res.status(429).json({ ok: false, error: 'Rate limit exceeded. Wait before sending another message.' });
-    return;
-  }
-  next();
+function makeRateLimiter(limit: number, bucket: string) {
+  return function rateLimit(req: Request, res: Response, next: NextFunction) {
+    // Separate bucket per tier, so a burst of cheap reads cannot exhaust the
+    // allowance for CEO messages (and vice versa).
+    const { allowed, remaining } = checkRateLimit(`${bucket}:${req.ip || 'unknown'}`, limit);
+    res.setHeader('X-RateLimit-Remaining', remaining.toString());
+    if (!allowed) {
+      res.status(429).json({ ok: false, error: 'Rate limit exceeded. Wait before trying again.' });
+      return;
+    }
+    next();
+  };
 }
+
+const rateLimiter = makeRateLimiter(RATE_LIMIT, 'write');
+const readRateLimiter = makeRateLimiter(READ_RATE_LIMIT, 'read');
 
 // ─── LOG RING BUFFER ─────────────────────────────────────────────────────────
 // Last 500 console lines, served at GET /api/logs — the dashboard Live Logs
@@ -229,7 +241,7 @@ app.get('/api/system', (_req, res) => {
 });
 
 // Rate-limited: this reads files off disk, so it should not be a free scraping loop.
-app.get('/api/output', rateLimiter, async (req, res) => {
+app.get('/api/output', readRateLimiter, async (req, res) => {
   const filePath = (req.query.path as string) || '';
   if (!filePath) { res.status(400).json({ ok: false, error: 'Invalid path' }); return; }
   try {
