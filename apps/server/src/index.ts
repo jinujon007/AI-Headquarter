@@ -143,6 +143,9 @@ app.post('/api/agents/hire', requireServerKey, rateLimiter, (req, res) => {
   const provider = req.headers['x-llm-provider'] as string | undefined;
   const apiKey   = req.headers['x-api-key']     as string | undefined;
   const agent = room.hireAgent(name, role, provider, apiKey);
+  // hireAgent refuses past the 6-hire cap by returning { error }. Reporting that as
+  // ok:true made the dashboard show a successful hire for an agent that never existed.
+  if (agent?.error) { res.status(409).json({ ok: false, error: agent.error }); return; }
   res.json({ ok: true, agent });
 });
 

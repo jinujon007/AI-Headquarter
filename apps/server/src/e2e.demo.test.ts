@@ -156,6 +156,27 @@ describe('E2E demo path — CEO command → delegation → files → report', ()
         expect(stubAdapter.complete).toHaveBeenCalledTimes(4);
     }, 30000);
 
+    // Regression: hireAgent refuses past the cap by returning { error }, but the
+    // endpoint wrapped that in { ok: true }, so the dashboard reported a successful
+    // hire for an agent that was never created.
+    it('reports a refused hire as a failure, not ok:true', async () => {
+        const before = room.hireCount;
+        room.hireCount = 6;
+        try {
+            const res = await fetch(`${baseUrl}/api/agents/hire`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: 'Fiona', role: 'Financial Analyst' }),
+            });
+            const body = await res.json();
+            expect(res.status).toBe(409);
+            expect(body.ok).toBe(false);
+            expect(body.error).toMatch(/full/i);
+        } finally {
+            room.hireCount = before;
+        }
+    });
+
     it('streams an honest error when the room is gone', async () => {
         (OfficeRoom as any).activeRoom = null;
         const res = await fetch(`${baseUrl}/api/ceo/message`, {

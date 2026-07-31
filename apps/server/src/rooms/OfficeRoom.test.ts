@@ -355,3 +355,22 @@ describe('normalizeDeliverable', () => {
         expect(normalizeDeliverable('function build() { return 1; }', 'copywriter').extension).toBe('md');
     });
 });
+
+describe('hireAgent — office capacity', () => {
+    // The 6-hire cap is a documented limit ("max 11 agents" in docs/api.md) that had
+    // no test, and its refusal was being reported to the dashboard as ok:true.
+    it('refuses past 6 hires with an error instead of throwing', () => {
+        const room = makeRoom();
+        room.hireCount = 6;
+        const result = room.hireAgent('Fiona', 'Financial Analyst');
+        expect(result.error).toMatch(/full/i);
+    });
+
+    it('does not consume a slot when it refuses', () => {
+        const room = makeRoom();
+        room.hireCount = 6;
+        room.hireAgent('Fiona', 'Financial Analyst');
+        room.hireAgent('Sam', 'Designer');
+        expect(room.hireCount).toBe(6);
+    });
+});
